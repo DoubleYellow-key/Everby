@@ -1,4 +1,5 @@
 import "./pet.css";
+import { chooseLocalBehavior } from "../core/behavior";
 import { frameAtTime } from "../core/timeline";
 import type { PetAnimation, PetRuntime } from "../shared/contracts";
 
@@ -17,7 +18,8 @@ let dragging = false;
 let dragOffset = { x: 0, y: 0 };
 let pointerStart = { x: 0, y: 0 };
 let lastFrame = performance.now();
-let nextBehaviorAt = performance.now() + 4_000;
+let nextBehaviorAt = performance.now() + 12_000;
+let localBehaviorEndsAt = 0;
 const extensionImages = new Map<string, HTMLImageElement>();
 
 function resize(): void {
@@ -31,9 +33,17 @@ function resize(): void {
 
 function findAnimation(id: string): PetAnimation { return runtime.animations.find((item) => item.id === id) ?? runtime.animations[0]; }
 
-function play(id: string): void {
+function animationDuration(value: PetAnimation): number {
+  return value.frames.reduce((sum, frame) => sum + frame.durationMs, 0);
+}
+
+function play(id: string, protectFromLocal = true): void {
   animation = findAnimation(id);
   animationStarted = performance.now();
+  if (protectFromLocal) {
+    localBehaviorEndsAt = 0;
+    nextBehaviorAt = Math.max(nextBehaviorAt, animationStarted + animationDuration(animation) + 8_000);
+  }
 }
 
 function loadImage(src: string): HTMLImageElement {
@@ -44,11 +54,10 @@ function loadImage(src: string): HTMLImageElement {
 
 function selectLocalBehavior(now: number): void {
   if (dragging || runtime.settings.paused || now < nextBehaviorAt) return;
-  const roll = Math.random();
-  if (roll > 0.72) play(x > innerWidth / 2 ? "run-left" : "run-right");
-  else if (roll > 0.58) play("wave");
-  else play("idle");
-  nextBehaviorAt = now + 3_000 + Math.random() * 4_000;
+  const behavior = chooseLocalBehavior(Math.random(), x > innerWidth / 2);
+  play(behavior.id, false);
+  localBehaviorEndsAt = now + behavior.minDurationMs + Math.random() * (behavior.maxDurationMs - behavior.minDurationMs);
+  nextBehaviorAt = localBehaviorEndsAt + 10_000 + Math.random() * 12_000;
 }
 
 function draw(now: number): void {
@@ -56,6 +65,7 @@ function draw(now: number): void {
   resizeIfNeeded();
   context.clearRect(0, 0, innerWidth, innerHeight);
   if (!runtime || !animation || !atlas.complete) { requestAnimationFrame(draw); return; }
+  if (localBehaviorEndsAt > 0 && now >= localBehaviorEndsAt) { localBehaviorEndsAt = 0; play("idle", false); }
   selectLocalBehavior(now);
   const index = frameAtTime(animation.frames, now - animationStarted, animation.loop);
   const frame = animation.frames[index];
@@ -73,8 +83,7 @@ function draw(now: number): void {
     if (image.complete) context.drawImage(image, x, y, width, height);
   } else context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, x, y, width, height);
   if (!animation.loop) {
-    const duration = animation.frames.reduce((sum, item) => sum + item.durationMs, 0);
-    if (now - animationStarted >= duration) play("idle");
+    if (now - animationStarted >= animationDuration(animation)) play("idle", false);
   }
   requestAnimationFrame(draw);
 }
@@ -101,7 +110,7 @@ canvas.addEventListener("pointerleave", () => { if (!dragging) window.souldesk.s
 canvas.addEventListener("pointerdown", (event) => {
   if (!isOpaque(event.clientX, event.clientY)) return;
   dragging = true; pointerStart = { x: event.clientX, y: event.clientY }; dragOffset = { x: event.clientX - x, y: event.clientY - y };
-  canvas.setPointerCapture(event.pointerId); play("waiting");
+  canvas.setPointerCapture(event.pointerId); play("review");
 });
 canvas.addEventListener("pointerup", (event) => {
   if (!dragging) return;
@@ -117,6 +126,7 @@ async function applyRuntime(next: PetRuntime): Promise<void> {
   const offscreenContext = offscreen.getContext("2d", { willReadFrequently: true })!; offscreenContext.drawImage(atlas, 0, 0);
   atlasAlpha = offscreenContext.getImageData(0, 0, offscreen.width, offscreen.height).data; atlasWidth = offscreen.width;
   animation = findAnimation("idle"); animationStarted = performance.now();
+  nextBehaviorAt = performance.now() + 12_000; localBehaviorEndsAt = 0;
   document.documentElement.dataset.appReady = "true";
 }
 

@@ -199,7 +199,7 @@ async function runChat(requestId: string, content: string): Promise<void> {
     const userMessage = { id: crypto.randomUUID(), role: "user" as const, content, createdAt: Date.now() };
     database.addMessage(userMessage);
     await broadcast();
-    sendAll("pet:action", "waiting");
+    sendAll("pet:action", "review");
     const persona = database.getPersona();
     const system = [
       `你是桌面陪伴角色 ${persona.name}。`, persona.background, persona.speakingStyle,

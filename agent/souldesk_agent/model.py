@@ -97,7 +97,13 @@ class CompatibleModel:
 
     def plan(self, config: Dict[str, Any], transcript: str) -> Dict[str, Any]:
         content = self._json_completion(config, [
-            {"role": "system", "content": "Return JSON only with actionIntent, mood, memoryCandidates. actionIntent must be one of idle,greet,happy,encourage,think,work,wait,celebrate,tired,confused."},
+            {"role": "system", "content": (
+                "Read the emotional tone of the conversation and choose a visible companion reaction. "
+                "Return JSON only with actionIntent, mood, memoryCandidates. "
+                "Use greet for a greeting, happy for warm positive emotion, celebrate for success, "
+                "encourage for support, think for reflection, work for focused coding, wait when user input is needed, "
+                "tired for a stretch or break, confused for frustration or uncertainty, and idle only when no reaction fits."
+            )},
             {"role": "user", "content": transcript[-4000:]},
         ])
         fallback = {"actionIntent": "idle", "mood": "calm", "memoryCandidates": []}

@@ -2,15 +2,15 @@ import type { ActionIntent, AppSettings, PetAnimation, PetRuntime } from "../sha
 
 const FRAME_COUNTS = [6, 8, 8, 4, 5, 8, 6, 6, 6] as const;
 const ACTIONS: Array<{ id: string; loop: boolean; intents: ActionIntent[]; durationMs: number }> = [
-  { id: "idle", loop: true, intents: ["idle", "tired"], durationMs: 180 },
-  { id: "run-right", loop: true, intents: ["idle"], durationMs: 110 },
-  { id: "run-left", loop: true, intents: ["idle"], durationMs: 110 },
-  { id: "wave", loop: false, intents: ["greet", "happy"], durationMs: 150 },
-  { id: "jump", loop: false, intents: ["celebrate", "happy", "encourage"], durationMs: 130 },
-  { id: "failed", loop: false, intents: ["confused", "tired"], durationMs: 160 },
-  { id: "waiting", loop: true, intents: ["wait", "think"], durationMs: 170 },
-  { id: "working", loop: true, intents: ["work", "encourage"], durationMs: 120 },
-  { id: "review", loop: true, intents: ["think", "work"], durationMs: 160 }
+  { id: "idle", loop: true, intents: ["idle"], durationMs: 220 },
+  { id: "run-right", loop: true, intents: [], durationMs: 140 },
+  { id: "run-left", loop: true, intents: [], durationMs: 140 },
+  { id: "wave", loop: false, intents: ["greet", "happy"], durationMs: 320 },
+  { id: "jump", loop: false, intents: ["celebrate", "happy", "encourage"], durationMs: 190 },
+  { id: "failed", loop: false, intents: ["confused"], durationMs: 220 },
+  { id: "stretch", loop: false, intents: ["tired"], durationMs: 250 },
+  { id: "working", loop: true, intents: ["work", "encourage"], durationMs: 180 },
+  { id: "review", loop: true, intents: ["think", "wait", "work"], durationMs: 220 }
 ];
 
 export const DEFAULT_SETTINGS: AppSettings = {

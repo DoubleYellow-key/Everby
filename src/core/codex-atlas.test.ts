@@ -6,10 +6,12 @@ describe("createCodexRuntime", () => {
     const runtime = createCodexRuntime({ id: "daily", name: "Daily", description: "Programmer", sheetUrl: "pet://daily/spritesheet.webp" });
     expect(runtime.animations).toHaveLength(9);
     expect(runtime.animations.map((animation) => animation.id)).toEqual([
-      "idle", "run-right", "run-left", "wave", "jump", "failed", "waiting", "working", "review"
+      "idle", "run-right", "run-left", "wave", "jump", "failed", "stretch", "working", "review"
     ]);
     expect(runtime.animations[0].frames).toHaveLength(6);
     expect(runtime.animations[1].frames).toHaveLength(8);
     expect(runtime.animations[0].frames[0]).toMatchObject({ x: 0, y: 0, width: 192, height: 208 });
+    expect(runtime.animations.find((animation) => animation.id === "wave")?.frames[0].durationMs).toBe(320);
+    expect(runtime.animations.find((animation) => animation.id === "run-left")?.intents).toEqual([]);
   });
 });
