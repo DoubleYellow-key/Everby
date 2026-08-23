@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   y: null,
   activeAppEnabled: false,
   proactiveEnabled: true,
+  remindersEnabled: true,
+  taskAssistantEnabled: true,
   quietHoursStart: "23:00",
   quietHoursEnd: "08:00"
 };

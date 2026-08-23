@@ -43,6 +43,24 @@ class CompatibleModelTests(unittest.TestCase):
         model = CompatibleModel(lambda *_args, **_kwargs: FakeResponse(json.dumps(wire).encode()))
         self.assertEqual(model.plan(self.config, "test")["actionIntent"], "idle")
 
+    def test_validates_todo_operations_and_converts_iso_times(self):
+        decision = {
+            "actionIntent": "happy",
+            "mood": "helpful",
+            "memoryCandidates": [],
+            "todoOperations": [
+                {"type": "create", "title": "喝水", "remindAt": "2026-08-24T15:00:00+08:00", "repeat": "daily"},
+                {"type": "complete", "title": "写周报"},
+                {"type": "delete", "title": "全部"},
+            ],
+        }
+        wire = {"choices": [{"message": {"content": json.dumps(decision, ensure_ascii=False)}}]}
+        model = CompatibleModel(lambda *_args, **_kwargs: FakeResponse(json.dumps(wire).encode()))
+        result = model.plan(self.config, "test")
+        self.assertEqual(len(result["todoOperations"]), 2)
+        self.assertEqual(result["todoOperations"][0]["remindAt"], 1787554800000)
+        self.assertEqual(result["todoOperations"][1], {"type": "complete", "title": "写周报"})
+
     def test_rejects_non_http_model_urls(self):
         model = CompatibleModel()
         with self.assertRaises(ValueError):

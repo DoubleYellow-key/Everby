@@ -16,7 +16,46 @@ export interface AgentDecision {
   actionIntent: ActionIntent;
   mood: string;
   memoryCandidates: string[];
+  todoOperations: TodoOperation[];
 }
+
+export type TodoRepeat = "none" | "daily";
+export type TodoSource = "manual" | "chat";
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  notes: string;
+  dueAt: number | null;
+  remindAt: number | null;
+  repeat: TodoRepeat;
+  source: TodoSource;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  lastRemindedAt: number | null;
+}
+
+export interface CreateTodoInput {
+  title: string;
+  notes?: string;
+  dueAt?: number | null;
+  remindAt?: number | null;
+  repeat?: TodoRepeat;
+}
+
+export interface UpdateTodoInput {
+  title?: string;
+  notes?: string;
+  dueAt?: number | null;
+  remindAt?: number | null;
+  repeat?: TodoRepeat;
+  completed?: boolean;
+}
+
+export type TodoOperation =
+  | { type: "create"; title: string; notes?: string; dueAt?: number | null; remindAt?: number | null; repeat?: TodoRepeat }
+  | { type: "complete"; title: string };
 
 export interface PersonaProfile {
   petId: string;
@@ -37,6 +76,8 @@ export interface ModelSettings {
 export interface PresenceSettings {
   activeAppEnabled: boolean;
   proactiveEnabled: boolean;
+  remindersEnabled: boolean;
+  taskAssistantEnabled: boolean;
   quietHoursStart: string;
   quietHoursEnd: string;
 }
@@ -80,6 +121,7 @@ export interface AppSnapshot {
   messages: ChatMessage[];
   memorySummary: string;
   motionPacks: MotionPackSummary[];
+  todos: TodoItem[];
 }
 
 export interface ChatRequest { content: string }
@@ -103,6 +145,9 @@ export interface SoulDeskApi {
   importMotion(): Promise<MotionPackSummary | null>;
   setMotionEnabled(packId: string, enabled: boolean): Promise<void>;
   removeMotion(packId: string): Promise<void>;
+  createTodo(input: CreateTodoInput): Promise<TodoItem>;
+  updateTodo(id: string, patch: UpdateTodoInput): Promise<TodoItem>;
+  deleteTodo(id: string): Promise<void>;
   onChatDelta(callback: (delta: ChatDelta) => void): () => void;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onRuntime(callback: (runtime: PetRuntime) => void): () => void;

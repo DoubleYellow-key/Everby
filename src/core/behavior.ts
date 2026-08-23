@@ -1,10 +1,23 @@
 import { z } from "zod";
 import { ACTION_INTENTS, type ActionIntent, type AgentDecision } from "../shared/contracts";
 
+const todoOperationSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("create"), title: z.string().trim().min(1).max(160), notes: z.string().trim().max(500).optional(),
+    dueAt: z.number().int().nonnegative().nullable().optional(), remindAt: z.number().int().nonnegative().nullable().optional(),
+    repeat: z.enum(["none", "daily"]).optional()
+  }).strict(),
+  z.object({ type: z.literal("complete"), title: z.string().trim().min(1).max(160) }).strict()
+]);
+
 const decisionSchema = z.object({
   actionIntent: z.enum(ACTION_INTENTS),
   mood: z.string().trim().min(1).max(40),
-  memoryCandidates: z.array(z.string().trim().min(1).max(240)).max(5).default([])
+  memoryCandidates: z.array(z.string().trim().min(1).max(240)).max(5).default([]),
+  todoOperations: z.array(z.unknown()).max(10).default([]).transform((operations) => operations.flatMap((operation) => {
+    const parsed = todoOperationSchema.safeParse(operation);
+    return parsed.success ? [parsed.data] : [];
+  }).slice(0, 5))
 });
 
 interface ActionCandidate { id: string; intents: readonly ActionIntent[]; weight?: number }
@@ -45,5 +58,5 @@ export function fallbackConversationIntent(text: string): ActionIntent {
 
 export function resolveDecision(input: unknown): AgentDecision {
   const result = decisionSchema.safeParse(input);
-  return result.success ? result.data : { actionIntent: "idle", mood: "calm", memoryCandidates: [] };
+  return result.success ? result.data : { actionIntent: "idle", mood: "calm", memoryCandidates: [], todoOperations: [] };
 }

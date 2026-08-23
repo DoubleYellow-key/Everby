@@ -4,12 +4,13 @@ import { join, resolve, sep } from "node:path";
 import { activeWindow } from "get-windows";
 import { z } from "zod";
 import {
-  app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, screen, Tray, powerMonitor,
+  app, BrowserWindow, dialog, ipcMain, Menu, Notification, protocol, safeStorage, screen, Tray, powerMonitor,
   type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle
 } from "electron";
 import { createCodexRuntime } from "../src/core/codex-atlas";
 import { chooseAnimation, fallbackConversationIntent } from "../src/core/behavior";
-import type { AppSettings, AppSnapshot, ChatDelta, PetRuntime, PetSummary } from "../src/shared/contracts";
+import { selectTodosForReview } from "../src/core/reminders";
+import type { AppSettings, AppSnapshot, ChatDelta, PetRuntime, PetSummary, TodoOperation } from "../src/shared/contracts";
 import { AppDatabase } from "./services/database";
 import { MotionService } from "./services/motion-service";
 import { discoverPets, type CatalogPet } from "./services/pet-catalog";
@@ -32,6 +33,9 @@ let lastBehaviorPlanAt = 0;
 let nextProactiveAt = Date.now() + 60 * 60_000;
 let proactiveDay = "";
 let proactiveCount = 0;
+let lastTaskReviewAt = 0;
+let taskReviewDay = "";
+let taskReviewCount = 0;
 const hourlyPlans: number[] = [];
 const requests = new Map<string, AbortController>();
 let petCatalog: CatalogPet[] = [];
@@ -51,7 +55,7 @@ function trusted(event: IpcMainInvokeEvent | IpcMainEvent): void {
 
 const settingsPatchSchema = z.object({
   visible: z.boolean(), paused: z.boolean(), alwaysOnTop: z.boolean(), scale: z.number().min(0.5).max(2),
-  x: z.number().nullable(), y: z.number().nullable(), activeAppEnabled: z.boolean(), proactiveEnabled: z.boolean(),
+  x: z.number().nullable(), y: z.number().nullable(), activeAppEnabled: z.boolean(), proactiveEnabled: z.boolean(), remindersEnabled: z.boolean(), taskAssistantEnabled: z.boolean(),
   quietHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), quietHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
 }).partial().strict();
 const personaPatchSchema = z.object({ name: z.string().trim().min(1).max(80), background: z.string().trim().max(2_000), speakingStyle: z.string().trim().max(1_000), userAddress: z.string().trim().max(40), boundaries: z.string().trim().max(2_000) }).partial().strict();
@@ -60,6 +64,13 @@ const modelPatchSchema = z.object({
   model: z.string().trim().min(1).max(160), temperature: z.number().min(0).max(2), apiKey: z.string().max(2_000).optional()
 }).partial().strict();
 const packIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
+const todoIdSchema = z.string().uuid();
+const todoCreateSchema = z.object({
+  title: z.string().trim().min(1).max(160), notes: z.string().trim().max(500).optional(),
+  dueAt: z.number().int().nonnegative().nullable().optional(), remindAt: z.number().int().nonnegative().nullable().optional(),
+  repeat: z.enum(["none", "daily"]).optional()
+}).strict();
+const todoUpdateSchema = todoCreateSchema.partial().extend({ completed: z.boolean().optional() }).strict();
 
 function desktopBounds(): Rectangle {
   const areas = screen.getAllDisplays().map((display) => display.workArea);
@@ -182,8 +193,33 @@ function snapshot(): AppSnapshot {
   const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item) }));
   return {
     activePetId: pet.id, pets, persona: database.getPersona(pet.id, pet.name, pet.description), model: database.getModel(), settings: database.getSettings(),
-    messages: database.getMessages(), memorySummary: database.getMemorySummary(), motionPacks: database.listMotionPacks()
+    messages: database.getMessages(), memorySummary: database.getMemorySummary(), motionPacks: database.listMotionPacks(), todos: database.listTodos()
   };
+}
+
+function todoContext(now = Date.now()): string {
+  const pending = database.listTodos().filter((item) => item.completedAt === null).slice(0, 30);
+  if (pending.length === 0) return "当前计划清单为空。";
+  const lines = pending.map((item) => {
+    const schedule = item.remindAt ? `提醒 ${new Date(item.remindAt).toLocaleString()}` : item.dueAt ? `截止 ${new Date(item.dueAt).toLocaleString()}` : "未设时间";
+    return `- ${item.title}（${schedule}${item.repeat === "daily" ? "，每日重复" : ""}）`;
+  });
+  return `当前本地时间：${new Date(now).toString()}\n未完成计划：\n${lines.join("\n")}`;
+}
+
+function applyTodoOperations(operations: TodoOperation[]): void {
+  for (const operation of operations) {
+    if (operation.type === "create") {
+      const duplicate = database.listTodos().some((item) => item.completedAt === null && item.title === operation.title && item.remindAt === (operation.remindAt ?? null));
+      if (!duplicate) database.createTodo(operation, "chat");
+      continue;
+    }
+    const title = operation.title.trim().toLocaleLowerCase();
+    const pending = database.listTodos().filter((item) => item.completedAt === null);
+    const match = pending.find((item) => item.title.toLocaleLowerCase() === title)
+      ?? pending.find((item) => item.title.toLocaleLowerCase().includes(title) || title.includes(item.title.toLocaleLowerCase()));
+    if (match) database.updateTodo(match.id, { completed: true });
+  }
 }
 
 function sendAll(channel: string, payload: unknown): void {
@@ -218,6 +254,8 @@ async function runChat(requestId: string, content: string): Promise<void> {
       `你是桌面陪伴角色 ${persona.name}。`, persona.background, persona.speakingStyle,
       `称呼用户为：${persona.userAddress}。`, persona.boundaries,
       database.getMemorySummary() ? `长期记忆摘要：${database.getMemorySummary()}` : "",
+      todoContext(),
+      "当用户明确要求添加计划、设置提醒或完成计划时，请自然确认；本地计划工具会在回复后执行。不要声称执行删除操作。",
       currentAppName ? `用户当前正在使用的应用：${currentAppName}。不要猜测应用中的具体内容。` : ""
     ].filter(Boolean).join("\n");
     const messages = [{ role: "system" as const, content: system }, ...database.getMessages(12).map((message) => ({ role: message.role, content: message.content }))];
@@ -226,8 +264,9 @@ async function runChat(requestId: string, content: string): Promise<void> {
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
     database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: Date.now() });
     const fallbackIntent = fallbackConversationIntent(`${content}\n${reply}`);
-    const decision = await agent.planBehavior({ ...model, apiKey, transcript: `用户：${content}\n${persona.name}：${reply}`, signal: controller.signal })
-      .catch(() => ({ actionIntent: fallbackConversationIntent(`${content}\n${reply}`), mood: "responsive", memoryCandidates: [] }));
+    const decision = await agent.planBehavior({ ...model, apiKey, transcript: `${todoContext()}\n用户：${content}\n${persona.name}：${reply}`, signal: controller.signal })
+      .catch(() => ({ actionIntent: fallbackConversationIntent(`${content}\n${reply}`), mood: "responsive", memoryCandidates: [], todoOperations: [] }));
+    applyTodoOperations(decision.todoOperations);
     const runtime = await runtimePayload();
     const reaction = chooseAnimation(decision.actionIntent === "idle" ? fallbackIntent : decision.actionIntent, runtime.animations);
     emit({ requestId, delta: "", done: true });
@@ -263,6 +302,28 @@ async function runPresenceTick(): Promise<void> {
     void agent.planBehavior({ ...model, apiKey, transcript: `当前时间 ${new Date().toLocaleTimeString()}。${currentAppName ? `用户正在使用 ${currentAppName}。` : ""}选择一个安静自然的桌宠动作。` })
       .then(async (decision) => sendAll("pet:action", chooseAnimation(decision.actionIntent, (await runtimePayload()).animations))).catch(() => undefined);
   }
+  if (settings.taskAssistantEnabled && now - lastTaskReviewAt >= 30 * 60_000) {
+    const reviewDay = new Date(now).toISOString().slice(0, 10);
+    if (taskReviewDay !== reviewDay) { taskReviewDay = reviewDay; taskReviewCount = 0; }
+    const candidates = selectTodosForReview(database.listTodos(), now);
+    if (candidates.length > 0 && taskReviewCount < 4) {
+      lastTaskReviewAt = now; taskReviewCount += 1;
+      const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 45_000);
+      try {
+        const persona = database.getPersona();
+        const plans = candidates.map((item) => `- ${item.title}：${item.dueAt && item.dueAt < now ? "已逾期" : "临近"}`).join("\n");
+        const reply = await agent.streamReply({ ...model, apiKey, signal: controller.signal, onDelta: () => undefined, messages: [
+          { role: "system", content: `你是${persona.name}。${persona.speakingStyle} 根据计划清单主动提醒一句，不超过45字，具体、克制，不声称看到了屏幕内容。` },
+          { role: "user", content: `${todoContext(now)}\n需要关注：\n${plans}${currentAppName ? `\n用户正在使用 ${currentAppName}。` : ""}` }
+        ] });
+        if (reply) {
+          database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now });
+          broadcastSnapshot(); sendAll("pet:speech", reply);
+          sendAll("pet:action", chooseAnimation("encourage", (await runtimePayload()).animations));
+        }
+      } catch { /* Task reviews are opportunistic. */ } finally { clearTimeout(timeout); }
+    }
+  }
   const day = new Date().toISOString().slice(0, 10);
   if (proactiveDay !== day) { proactiveDay = day; proactiveCount = 0; }
   if (!settings.proactiveEnabled || now < nextProactiveAt || proactiveCount >= 4) return;
@@ -276,6 +337,23 @@ async function runPresenceTick(): Promise<void> {
     ] });
     if (reply) { database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now }); broadcastSnapshot(); sendAll("pet:speech", reply); sendAll("pet:action", "wave"); }
   } catch { /* Proactive failures stay silent. */ } finally { clearTimeout(timeout); }
+}
+
+async function runReminderTick(): Promise<void> {
+  const settings = database.getSettings();
+  if (!settings.remindersEnabled || powerMonitor.getSystemIdleState(60) === "locked") return;
+  const due = database.claimDueReminders();
+  if (due.length === 0) return;
+  const names = due.slice(0, 3).map((item) => item.title);
+  const message = due.length === 1 ? `提醒时间到了：${names[0]}` : `提醒时间到了：${names.join("、")}${due.length > 3 ? `等 ${due.length} 项` : ""}`;
+  database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: message, createdAt: Date.now() });
+  broadcastSnapshot(); sendAll("pet:speech", message);
+  sendAll("pet:action", chooseAnimation("encourage", (await runtimePayload()).animations));
+  if (Notification.isSupported()) {
+    const notification = new Notification({ title: "SoulDesk 提醒", body: message, silent: false });
+    notification.on("click", openChat);
+    notification.show();
+  }
 }
 
 async function installMotion(path: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
@@ -322,6 +400,9 @@ function registerIpc(): void {
   ipcMain.handle("motion:import", async (event) => { trusted(event); const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "SoulDesk 动作扩展", extensions: ["soulmotion"] }] }); return result.canceled || !result.filePaths[0] ? null : installMotion(result.filePaths[0]); });
   ipcMain.handle("motion:enabled", async (event, packId: unknown, enabled: unknown) => { trusted(event); const id = packIdSchema.parse(packId); if (typeof enabled !== "boolean") throw new Error("扩展状态无效"); database.setMotionPackEnabled(id, enabled); await broadcast(); });
   ipcMain.handle("motion:remove", async (event, packId: unknown) => { trusted(event); const id = packIdSchema.parse(packId); const path = database.getMotionPackPath(id); database.deleteMotionPack(id); if (path) await rm(path, { recursive: true, force: true }); await broadcast(); });
+  ipcMain.handle("todo:create", (event, input: unknown) => { trusted(event); const todo = database.createTodo(todoCreateSchema.parse(input)); broadcastSnapshot(); return todo; });
+  ipcMain.handle("todo:update", (event, id: unknown, patch: unknown) => { trusted(event); const todo = database.updateTodo(todoIdSchema.parse(id), todoUpdateSchema.parse(patch)); broadcastSnapshot(); return todo; });
+  ipcMain.handle("todo:delete", (event, id: unknown) => { trusted(event); database.deleteTodo(todoIdSchema.parse(id)); broadcastSnapshot(); });
 }
 
 function createTray(): void {
@@ -385,6 +466,7 @@ async function initialize(): Promise<void> {
     void activeWindow({ accessibilityPermission: false, screenRecordingPermission: false }).then((value) => { currentAppName = value?.owner.name === "SoulDesk" ? "" : value?.owner.name ?? ""; }).catch(() => { currentAppName = ""; });
   }, 15_000).unref();
   setInterval(() => void runPresenceTick(), 60_000).unref();
+  setInterval(() => void runReminderTick(), 15_000).unref();
 }
 
 app.whenReady().then(initialize);

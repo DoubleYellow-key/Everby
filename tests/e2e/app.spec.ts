@@ -35,6 +35,14 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
     await expect(manager!.getByRole("option", { name: /Daily/ })).toHaveAttribute("aria-selected", "true");
     await manager!.screenshot({ path: join(process.cwd(), "test-results/roles.png") });
     await expect.poll(() => pet!.evaluate(() => window.souldesk.getPetRuntime().then((runtime) => runtime.id))).toBe("daily");
+    await manager!.getByRole("button", { name: "计划" }).click();
+    await expect(manager!.getByRole("heading", { name: "计划与提醒" })).toBeVisible();
+    await manager!.getByLabel("计划内容").fill("完成 SoulDesk 提醒测试");
+    await manager!.getByRole("button", { name: "添加计划" }).click();
+    await expect(manager!.getByText("完成 SoulDesk 提醒测试")).toBeVisible();
+    await manager!.getByRole("checkbox", { name: "完成 完成 SoulDesk 提醒测试" }).click();
+    await expect.poll(() => manager!.evaluate(() => window.souldesk.getSnapshot().then((snapshot) => snapshot.todos[0]?.completedAt !== null))).toBe(true);
+    await manager!.screenshot({ path: join(process.cwd(), "test-results/plans.png") });
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().endsWith("pet.html"))?.webContents.send("pet:action", "working"));
     await pet!.waitForTimeout(450);
     const dailyOpaquePixels = await pet!.locator("#pet-canvas").evaluate((canvas: HTMLCanvasElement) => {

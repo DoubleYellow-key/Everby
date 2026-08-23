@@ -14,6 +14,7 @@ SoulDesk 是一个面向 Windows 与 macOS 的本地优先桌面陪伴智能体�
 - OpenAI Chat Completions 兼容接口，支持流式回复、取消、超时和有限重试
 - Python 智能体负责对话、滚动摘要和受 Zod 约束的行为决策
 - 本地待机调度、主动陪伴、免打扰时段和低频模型动作选择
+- 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
 - SQLite 本地记忆与 Electron `safeStorage` API Key 保护
 - `.soulmotion` 动作扩展包的验证、安装、启停和卸载
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
@@ -49,6 +50,12 @@ SOULDESK_MODEL=llama3.2:latest pnpm agent:smoke
 ```
 
 API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返回给渲染进程，也不应写入 `.env` 或提交到仓库。
+
+## 计划与提醒
+
+可在管理窗口的“计划”页面添加、完成或删除清单项，并分别设置截止时间和提醒时间。提醒支持一次性与每日重复；即使模型离线，到点后的系统通知、桌宠气泡和本地响应仍然可用。
+
+也可以直接在对话中提出“下午三点提醒我喝水”“把整理周报加入计划”或“完成整理周报”。Python 智能体只会产出经过校验的新增与完成操作，不会自行删除项目。开启“AI 清单关注”后，角色会在非免打扰时段低频查看临近或逾期项目，并可结合当前时间和已授权的前台应用名称给出简短提醒。
 
 ## 架构
 
@@ -89,6 +96,8 @@ pnpm build           # Electron 渲染与主进程构建
 pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
+
+后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型和提醒系统只选择语义意图，具体动画由当前角色已启用的基础动作与扩展动作映射器决定。
 
 ## 打包
 

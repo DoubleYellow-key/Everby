@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -99,14 +100,17 @@ class CompatibleModel:
         content = self._json_completion(config, [
             {"role": "system", "content": (
                 "Read the emotional tone of the conversation and choose a visible companion reaction. "
-                "Return JSON only with actionIntent, mood, memoryCandidates. "
+                "Return JSON only with actionIntent, mood, memoryCandidates, todoOperations. "
                 "Use greet for a greeting, happy for warm positive emotion, celebrate for success, "
                 "encourage for support, think for reflection, work for focused coding, wait when user input is needed, "
-                "tired for a stretch or break, confused for frustration or uncertainty, and idle only when no reaction fits."
+                "tired for a stretch or break, confused for frustration or uncertainty, and idle only when no reaction fits. "
+                "todoOperations must be an array with at most 5 operations and must be empty unless the user explicitly asks to manage a plan. "
+                "To add an item use {type:'create',title,notes?,dueAt?,remindAt?,repeat?}; dueAt and remindAt must be ISO 8601 with an explicit timezone, "
+                "and repeat is none or daily. To mark an item done use {type:'complete',title}. Never invent, delete, or modify plans."
             )},
             {"role": "user", "content": transcript[-4000:]},
         ])
-        fallback = {"actionIntent": "idle", "mood": "calm", "memoryCandidates": []}
+        fallback = {"actionIntent": "idle", "mood": "calm", "memoryCandidates": [], "todoOperations": []}
         try:
             decision = json.loads(content)
         except json.JSONDecodeError:
@@ -117,11 +121,55 @@ class CompatibleModel:
         candidates = decision.get("memoryCandidates")
         if not isinstance(candidates, list):
             candidates = []
+        operations = []
+        raw_operations = decision.get("todoOperations")
+        if isinstance(raw_operations, list):
+            for operation in raw_operations[:5]:
+                parsed = self._todo_operation(operation)
+                if parsed is not None:
+                    operations.append(parsed)
         return {
             "actionIntent": decision["actionIntent"],
             "mood": mood[:80],
             "memoryCandidates": [item[:500] for item in candidates[:8] if isinstance(item, str)],
+            "todoOperations": operations,
         }
+
+    @staticmethod
+    def _todo_operation(value: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(value, dict) or value.get("type") not in {"create", "complete"}:
+            return None
+        title = value.get("title")
+        if not isinstance(title, str) or not title.strip():
+            return None
+        if value["type"] == "complete":
+            return {"type": "complete", "title": title.strip()[:160]}
+        operation: Dict[str, Any] = {"type": "create", "title": title.strip()[:160]}
+        notes = value.get("notes")
+        if isinstance(notes, str) and notes.strip():
+            operation["notes"] = notes.strip()[:500]
+        for field in ("dueAt", "remindAt"):
+            parsed = CompatibleModel._timestamp(value.get(field))
+            if parsed is not None:
+                operation[field] = parsed
+        repeat = value.get("repeat")
+        if repeat in {"none", "daily"}:
+            operation["repeat"] = repeat
+        return operation
+
+    @staticmethod
+    def _timestamp(value: Any) -> Optional[int]:
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return None
+            return int(parsed.timestamp() * 1000)
+        except ValueError:
+            return None
 
     def summarize(self, config: Dict[str, Any], previous: str, transcript: str) -> str:
         payload = {

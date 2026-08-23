@@ -51,4 +51,32 @@ describe("AppDatabase", () => {
     expect(database.getMemorySummary()).toBe("Daily memory");
     database.close();
   });
+
+  it("creates, completes and deletes local todo items", () => {
+    const directory = mkdtempSync(join(tmpdir(), "souldesk-db-"));
+    directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    const todo = database.createTodo({ title: "  写周报  ", notes: "整理进度" }, "manual", 1_000);
+    expect(todo).toMatchObject({ title: "写周报", notes: "整理进度", repeat: "none", source: "manual", completedAt: null });
+    expect(database.listTodos()).toHaveLength(1);
+    expect(database.updateTodo(todo.id, { completed: true }, 2_000).completedAt).toBe(2_000);
+    database.deleteTodo(todo.id);
+    expect(database.listTodos()).toEqual([]);
+    database.close();
+  });
+
+  it("claims one-time reminders once and advances daily reminders", () => {
+    const directory = mkdtempSync(join(tmpdir(), "souldesk-db-"));
+    directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    const once = database.createTodo({ title: "喝水", remindAt: 2_000 }, "chat", 1_000);
+    const daily = database.createTodo({ title: "站起来活动", remindAt: 2_000, repeat: "daily" }, "manual", 1_000);
+    expect(database.claimDueReminders(1_999)).toEqual([]);
+    expect(database.claimDueReminders(2_000).map((item) => item.id)).toEqual([once.id, daily.id]);
+    expect(database.claimDueReminders(2_000)).toEqual([]);
+    const advanced = database.listTodos().find((item) => item.id === daily.id)!;
+    expect(advanced.remindAt).toBeGreaterThan(2_000);
+    expect(advanced.lastRemindedAt).toBe(2_000);
+    database.close();
+  });
 });

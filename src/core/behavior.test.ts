@@ -11,7 +11,17 @@ describe("behavior mapping", () => {
   });
 
   it("sanitizes malformed model decisions", () => {
-    expect(resolveDecision({ actionIntent: "destroy", mood: 42 })).toEqual({ actionIntent: "idle", mood: "calm", memoryCandidates: [] });
+    expect(resolveDecision({ actionIntent: "destroy", mood: 42 })).toEqual({ actionIntent: "idle", mood: "calm", memoryCandidates: [], todoOperations: [] });
+  });
+
+  it("accepts only bounded todo operations from the model", () => {
+    expect(resolveDecision({
+      actionIntent: "happy", mood: "helpful", memoryCandidates: [],
+      todoOperations: [{ type: "create", title: "喝水", remindAt: 2_000, repeat: "daily" }, { type: "complete", title: "写周报" }]
+    }).todoOperations).toEqual([
+      { type: "create", title: "喝水", remindAt: 2_000, repeat: "daily" }, { type: "complete", title: "写周报" }
+    ]);
+    expect(resolveDecision({ actionIntent: "happy", mood: "calm", todoOperations: [{ type: "delete", title: "everything" }] }).todoOperations).toEqual([]);
   });
 
   it("keeps walking rare and favors quiet desk behaviors", () => {

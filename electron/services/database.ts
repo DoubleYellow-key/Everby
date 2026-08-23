@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_SETTINGS } from "../../src/core/codex-atlas";
-import type { AppSettings, ChatMessage, ModelSettings, MotionPackSummary, PersonaProfile } from "../../src/shared/contracts";
+import type { AppSettings, ChatMessage, CreateTodoInput, ModelSettings, MotionPackSummary, PersonaProfile, TodoItem, TodoSource, UpdateTodoInput } from "../../src/shared/contracts";
 
 function defaultPersona(petId: string, name = petId, description = ""): PersonaProfile {
   return {
@@ -17,6 +17,16 @@ function defaultPersona(petId: string, name = petId, description = ""): PersonaP
 
 export const DEFAULT_MODEL: ModelSettings = { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", temperature: 0.7, configured: false };
 type MemoryState = { summary: string; unsummarized: number };
+type TodoRow = {
+  id: string; title: string; notes: string; dueAt: number | null; remindAt: number | null; repeat: "none" | "daily";
+  source: TodoSource; createdAt: number; updatedAt: number; completedAt: number | null; lastRemindedAt: number | null;
+};
+
+function nextDailyReminder(value: number, now: number): number {
+  const next = new Date(value);
+  while (next.getTime() <= now) next.setDate(next.getDate() + 1);
+  return next.getTime();
+}
 
 export class AppDatabase {
   private readonly db: DatabaseSync;
@@ -29,6 +39,20 @@ export class AppDatabase {
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, pet_id TEXT NOT NULL DEFAULT 'daily', role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS motion_packs (pack_id TEXT PRIMARY KEY, version TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL, animation_count INTEGER NOT NULL, install_path TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        due_at INTEGER,
+        remind_at INTEGER,
+        repeat_rule TEXT NOT NULL DEFAULT 'none' CHECK(repeat_rule IN ('none', 'daily')),
+        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'chat')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        last_reminded_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS todos_reminder_idx ON todos(completed_at, remind_at, last_reminded_at);
     `);
     const messageColumns = this.db.prepare("PRAGMA table_info(messages)").all() as unknown as Array<{ name: string }>;
     if (!messageColumns.some((column) => column.name === "pet_id")) this.db.exec("ALTER TABLE messages ADD COLUMN pet_id TEXT NOT NULL DEFAULT 'daily'");
@@ -110,4 +134,58 @@ export class AppDatabase {
   setMotionPackEnabled(packId: string, enabled: boolean): void { this.db.prepare("UPDATE motion_packs SET enabled = ? WHERE pack_id = ?").run(enabled ? 1 : 0, packId); }
   getMotionPackPath(packId: string): string | null { return (this.db.prepare("SELECT install_path AS path FROM motion_packs WHERE pack_id = ?").get(packId) as { path: string } | undefined)?.path ?? null; }
   deleteMotionPack(packId: string): void { this.db.prepare("DELETE FROM motion_packs WHERE pack_id = ?").run(packId); }
+
+  private todoById(id: string): TodoItem | null {
+    return (this.db.prepare(`SELECT id, title, notes, due_at AS dueAt, remind_at AS remindAt, repeat_rule AS repeat,
+      source, created_at AS createdAt, updated_at AS updatedAt, completed_at AS completedAt, last_reminded_at AS lastRemindedAt
+      FROM todos WHERE id = ?`).get(id) as unknown as TodoRow | undefined) ?? null;
+  }
+
+  listTodos(): TodoItem[] {
+    return this.db.prepare(`SELECT id, title, notes, due_at AS dueAt, remind_at AS remindAt, repeat_rule AS repeat,
+      source, created_at AS createdAt, updated_at AS updatedAt, completed_at AS completedAt, last_reminded_at AS lastRemindedAt
+      FROM todos ORDER BY completed_at IS NOT NULL, COALESCE(remind_at, due_at, 9223372036854775807), created_at DESC`).all() as unknown as TodoItem[];
+  }
+
+  createTodo(input: CreateTodoInput, source: TodoSource = "manual", now = Date.now()): TodoItem {
+    const id = crypto.randomUUID();
+    this.db.prepare(`INSERT INTO todos(id, title, notes, due_at, remind_at, repeat_rule, source, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      id, input.title.trim(), input.notes?.trim() ?? "", input.dueAt ?? null, input.remindAt ?? null, input.repeat ?? "none", source, now, now
+    );
+    return this.todoById(id)!;
+  }
+
+  updateTodo(id: string, patch: UpdateTodoInput, now = Date.now()): TodoItem {
+    const current = this.todoById(id);
+    if (!current) throw new Error("计划不存在");
+    const completedAt = patch.completed === undefined ? current.completedAt : patch.completed ? now : null;
+    const reminderChanged = patch.remindAt !== undefined || patch.repeat !== undefined;
+    this.db.prepare(`UPDATE todos SET title = ?, notes = ?, due_at = ?, remind_at = ?, repeat_rule = ?, updated_at = ?, completed_at = ?, last_reminded_at = ? WHERE id = ?`).run(
+      patch.title?.trim() ?? current.title,
+      patch.notes?.trim() ?? current.notes,
+      patch.dueAt === undefined ? current.dueAt : patch.dueAt,
+      patch.remindAt === undefined ? current.remindAt : patch.remindAt,
+      patch.repeat ?? current.repeat,
+      now,
+      completedAt,
+      reminderChanged ? null : current.lastRemindedAt,
+      id
+    );
+    return this.todoById(id)!;
+  }
+
+  deleteTodo(id: string): void { this.db.prepare("DELETE FROM todos WHERE id = ?").run(id); }
+
+  claimDueReminders(now = Date.now()): TodoItem[] {
+    const due = this.db.prepare(`SELECT id, title, notes, due_at AS dueAt, remind_at AS remindAt, repeat_rule AS repeat,
+      source, created_at AS createdAt, updated_at AS updatedAt, completed_at AS completedAt, last_reminded_at AS lastRemindedAt
+      FROM todos WHERE completed_at IS NULL AND remind_at IS NOT NULL AND remind_at <= ?
+      AND (repeat_rule = 'daily' OR last_reminded_at IS NULL) ORDER BY remind_at, created_at LIMIT 20`).all(now) as unknown as TodoItem[];
+    for (const item of due) {
+      const next = item.repeat === "daily" ? nextDailyReminder(item.remindAt!, now) : item.remindAt;
+      this.db.prepare("UPDATE todos SET remind_at = ?, last_reminded_at = ?, updated_at = ? WHERE id = ?").run(next, now, now, item.id);
+    }
+    return due;
+  }
 }
