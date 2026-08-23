@@ -12,8 +12,8 @@ export interface LocalBehavior { id: "idle" | "run-left" | "run-right" | "stretc
 
 export function chooseLocalBehavior(roll: number, onRightHalf: boolean): LocalBehavior {
   if (roll < 0.08) return { id: onRightHalf ? "run-left" : "run-right", minDurationMs: 2_200, maxDurationMs: 3_500 };
-  if (roll < 0.50) return { id: "working", minDurationMs: 8_000, maxDurationMs: 14_000 };
-  if (roll < 0.70) return { id: "stretch", minDurationMs: 1_500, maxDurationMs: 1_500 };
+  if (roll < 0.50) return { id: "working", minDurationMs: 18_000, maxDurationMs: 30_000 };
+  if (roll < 0.70) return { id: "stretch", minDurationMs: 2_730, maxDurationMs: 2_730 };
   if (roll < 0.84) return { id: "review", minDurationMs: 4_000, maxDurationMs: 8_000 };
   return { id: "idle", minDurationMs: 5_000, maxDurationMs: 9_000 };
 }

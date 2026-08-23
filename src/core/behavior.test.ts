@@ -22,4 +22,9 @@ describe("behavior mapping", () => {
     expect(chooseLocalBehavior(0.75, false).id).toBe("review");
     expect(chooseLocalBehavior(0.95, false).id).toBe("idle");
   });
+
+  it("keeps coding visible and lets stretching finish before returning to idle", () => {
+    expect(chooseLocalBehavior(0.08, false)).toMatchObject({ minDurationMs: 18_000, maxDurationMs: 30_000 });
+    expect(chooseLocalBehavior(0.55, false)).toMatchObject({ minDurationMs: 2_730, maxDurationMs: 2_730 });
+  });
 });
