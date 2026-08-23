@@ -1,0 +1,37 @@
+.pet-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: -8px 0 28px;
+}
+
+.pet-option {
+  min-height: 68px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 50px 1fr 26px;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  color: var(--text);
+}
+
+.pet-option:hover { background: #fff9dc; border-color: #d9b735; }
+.pet-option.active { background: #fff3bd; border-color: #d2a817; box-shadow: inset 3px 0 #e4af09; }
+.pet-thumbnail {
+  width: 50px;
+  height: 50px;
+  border-radius: 6px;
+  background-color: #fff;
+  background-repeat: no-repeat;
+  background-size: 800% 900%;
+  background-position: 0 0;
+  border: 1px solid #eee2b7;
+}
+.pet-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pet-copy strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pet-copy small { font-size: 11px; color: var(--muted); }
+.pet-selected { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: #e4af09; color: #2b240b; }

@@ -1,0 +1,11 @@
+{
+  "id": "daily",
+  "displayName": "Daily",
+  "description": "一位冷静知性的程序员伙伴，戴细框眼镜，扎单马尾，喜欢安静地陪你写代码。",
+  "spritesheetPath": "spritesheet.webp",
+  "kind": "character",
+  "origin": "SoulDesk original character",
+  "redistributable": true,
+  "vibes": ["programmer", "intellectual", "cool", "focused", "casual"],
+  "tags": ["coding", "glasses", "single-ponytail", "desktop-companion"]
+}

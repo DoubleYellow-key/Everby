@@ -1,0 +1,29 @@
+packages:
+  - "."
+
+overrides:
+  tar: ^7.5.21
+
+supportedArchitectures:
+  os:
+    - current
+    - darwin
+    - win32
+  cpu:
+    - current
+    - arm64
+    - x64
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  get-windows: true
+  sharp: true
+
+onlyBuiltDependencies:
+  - electron
+  - electron-winstaller
+  - esbuild
+  - get-windows
+  - sharp

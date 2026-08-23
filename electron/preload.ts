@@ -1,0 +1,36 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { AppSettings, AppSnapshot, ChatDelta, ModelSettings, PersonaProfile, PetRuntime, SoulDeskApi } from "../src/shared/contracts";
+
+const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) => {
+  const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+};
+
+const api: SoulDeskApi = {
+  getSnapshot: () => ipcRenderer.invoke("app:snapshot"),
+  getPetRuntime: () => ipcRenderer.invoke("pet:runtime"),
+  selectPet: (petId: string) => ipcRenderer.invoke("pet:select", petId),
+  updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
+  updatePersona: (patch: Partial<PersonaProfile>) => ipcRenderer.invoke("persona:update", patch),
+  updateModel: (patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }) => ipcRenderer.invoke("model:update", patch),
+  testModel: () => ipcRenderer.invoke("model:test"),
+  sendMessage: (content: string) => ipcRenderer.invoke("chat:send", content),
+  stopMessage: (requestId: string) => ipcRenderer.invoke("chat:stop", requestId),
+  clearMessages: () => ipcRenderer.invoke("chat:clear"),
+  openChat: () => ipcRenderer.invoke("window:open-chat"),
+  openManager: () => ipcRenderer.invoke("window:open-manager"),
+  setPetInteractive: (interactive: boolean) => ipcRenderer.send("pet:interactive", interactive),
+  savePetPosition: (x: number, y: number) => ipcRenderer.invoke("pet:position", x, y),
+  importMotion: () => ipcRenderer.invoke("motion:import"),
+  setMotionEnabled: (packId: string, enabled: boolean) => ipcRenderer.invoke("motion:enabled", packId, enabled),
+  removeMotion: (packId: string) => ipcRenderer.invoke("motion:remove", packId),
+  onChatDelta: (callback: (value: ChatDelta) => void) => subscribe("chat:delta", callback),
+  onSnapshot: (callback: (value: AppSnapshot) => void) => subscribe("app:snapshot-changed", callback),
+  onRuntime: (callback: (value: PetRuntime) => void) => subscribe("pet:runtime-changed", callback),
+  onPetAction: (callback: (value: string) => void) => subscribe("pet:action", callback),
+  onPetSpeech: (callback: (value: string) => void) => subscribe("pet:speech", callback)
+};
+
+contextBridge.exposeInMainWorld("souldesk", api);
+export type { SoulDeskApi };

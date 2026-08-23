@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "packId": "daily-test-motion",
+  "version": "1.0.0",
+  "name": "Daily Test Motion",
+  "targetPetId": "daily",
+  "canvas": { "width": 192, "height": 208, "anchorX": 96, "anchorY": 208 },
+  "animations": [
+    {
+      "id": "test-pose",
+      "loop": true,
+      "weight": 1,
+      "intents": ["happy"],
+      "frames": [
+        { "src": "assets/000.webp", "durationMs": 120 },
+        { "src": "assets/001.webp", "durationMs": 120 }
+      ]
+    }
+  ]
+}
