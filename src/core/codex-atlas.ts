@@ -18,7 +18,7 @@ const ACTIONS: AtlasAction[] = [
   { id: "jump", loop: false, intents: ["celebrate", "happy", "encourage"], durationMs: 190 },
   { id: "failed", loop: false, intents: ["confused"], durationMs: 220 },
   { id: "stretch", loop: false, intents: ["tired"], durationMs: 300, columns: [0, 1, 2, 3, 4, 4, 3, 5], frameDurationsMs: [280, 280, 300, 320, 650, 220, 260, 420] },
-  { id: "working", loop: true, intents: ["work", "encourage"], durationMs: 400, columns: [0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 0, 1] },
+  { id: "working", loop: true, intents: ["work", "encourage"], durationMs: 400, columns: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] },
   { id: "review", loop: true, intents: ["think", "wait", "work"], durationMs: 220 }
 ];
 

@@ -7,5 +7,6 @@
   "origin": "SoulDesk original character",
   "redistributable": true,
   "vibes": ["programmer", "intellectual", "cool", "focused", "casual"],
-  "tags": ["coding", "glasses", "single-ponytail", "desktop-companion"]
+  "tags": ["coding", "glasses", "single-ponytail", "desktop-companion"],
+  "motions": ["drag"]
 }

@@ -45,6 +45,10 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
     });
     expect(dailyOpaquePixels).toBeGreaterThan(50);
     await pet!.screenshot({ path: join(process.cwd(), "test-results/daily-coding.png"), omitBackground: true });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().endsWith("pet.html"))?.webContents.send("pet:action", "drag"));
+    await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("drag");
+    await pet!.waitForTimeout(300);
+    await pet!.screenshot({ path: join(process.cwd(), "test-results/daily-drag.png"), omitBackground: true });
     await chat!.screenshot({ path: join(process.cwd(), "test-results/chat.png") });
     await pet!.screenshot({ path: join(process.cwd(), "test-results/pet.png"), omitBackground: true });
   }

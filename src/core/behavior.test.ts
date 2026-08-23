@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseAnimation, chooseLocalBehavior, resolveDecision } from "./behavior";
+import { chooseAnimation, chooseLocalBehavior, fallbackConversationIntent, resolveDecision } from "./behavior";
 
 describe("behavior mapping", () => {
   it("maps a validated semantic intent to an available character action", () => {
@@ -26,5 +26,12 @@ describe("behavior mapping", () => {
   it("keeps coding visible and lets stretching finish before returning to idle", () => {
     expect(chooseLocalBehavior(0.08, false)).toMatchObject({ minDurationMs: 18_000, maxDurationMs: 30_000 });
     expect(chooseLocalBehavior(0.55, false)).toMatchObject({ minDurationMs: 2_730, maxDurationMs: 2_730 });
+  });
+
+  it("keeps emotional feedback visible when the behavior model is unavailable", () => {
+    expect(fallbackConversationIntent("测试已经全部通过，完成了")).toBe("celebrate");
+    expect(fallbackConversationIntent("别担心，我们继续试试")).toBe("encourage");
+    expect(fallbackConversationIntent("让我想想这个问题？")).toBe("think");
+    expect(fallbackConversationIntent("今天随便聊聊")).toBe("happy");
   });
 });

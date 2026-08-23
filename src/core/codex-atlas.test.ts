@@ -15,7 +15,7 @@ describe("createCodexRuntime", () => {
     expect(runtime.animations.find((animation) => animation.id === "run-left")?.intents).toEqual([]);
     const working = runtime.animations.find((animation) => animation.id === "working")!;
     expect(working.frames).toHaveLength(12);
-    expect(working.frames.map((frame) => frame.x / 192)).toEqual([0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 0, 1]);
+    expect(working.frames.map((frame) => frame.x / 192)).toEqual([0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
     expect(working.frames.reduce((sum, frame) => sum + frame.durationMs, 0)).toBe(4_800);
     const stretch = runtime.animations.find((animation) => animation.id === "stretch")!;
     expect(stretch.loop).toBe(false);

@@ -8,7 +8,7 @@ import {
   type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle
 } from "electron";
 import { createCodexRuntime } from "../src/core/codex-atlas";
-import { chooseAnimation } from "../src/core/behavior";
+import { chooseAnimation, fallbackConversationIntent } from "../src/core/behavior";
 import type { AppSettings, AppSnapshot, ChatDelta, PetRuntime, PetSummary } from "../src/shared/contracts";
 import { AppDatabase } from "./services/database";
 import { MotionService } from "./services/motion-service";
@@ -161,6 +161,15 @@ async function runtimePayload(): Promise<PetRuntime> {
     sheetUrl: petSheetUrl(pet),
     settings: database.getSettings()
   });
+  if (pet.id === "daily" && pet.source === "bundled") {
+    runtime.animations.push({
+      id: "drag", loop: true, weight: 1, intents: [],
+      frames: Array.from({ length: 8 }, (_, index) => ({
+        x: 0, y: 0, width: 192, height: 208, durationMs: 150,
+        src: `souldesk://pet/${encodeURIComponent(pet.id)}/motions/drag/${String(index).padStart(2, "0")}.png?source=${pet.source}`
+      }))
+    });
+  }
   for (const pack of database.listMotionPacks().filter((item) => item.enabled)) {
     const path = database.getMotionPackPath(pack.packId);
     if (path) runtime.animations.push(...await motionService.loadAnimations(path, pack.packId, pet.id));
@@ -181,8 +190,12 @@ function sendAll(channel: string, payload: unknown): void {
   for (const window of [managerWindow, chatWindow, petWindow]) if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
 }
 
-async function broadcast(): Promise<void> {
+function broadcastSnapshot(): void {
   sendAll("app:snapshot-changed", snapshot());
+}
+
+async function broadcast(): Promise<void> {
+  broadcastSnapshot();
   sendAll("pet:runtime-changed", await runtimePayload());
 }
 
@@ -198,7 +211,7 @@ async function runChat(requestId: string, content: string): Promise<void> {
     if (!apiKey || !model.configured) throw new Error("请先在模型设置中配置 API");
     const userMessage = { id: crypto.randomUUID(), role: "user" as const, content, createdAt: Date.now() };
     database.addMessage(userMessage);
-    await broadcast();
+    broadcastSnapshot();
     sendAll("pet:action", "review");
     const persona = database.getPersona();
     const system = [
@@ -212,16 +225,18 @@ async function runChat(requestId: string, content: string): Promise<void> {
     if (!reply.trim()) throw new Error("模型没有返回文字");
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
     database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: Date.now() });
-    const decision = await agent.planBehavior({ ...model, apiKey, transcript: `${content}\n${reply}`, signal: controller.signal })
-      .catch(() => ({ actionIntent: "idle" as const, mood: "calm", memoryCandidates: [] }));
+    const fallbackIntent = fallbackConversationIntent(`${content}\n${reply}`);
+    const decision = await agent.planBehavior({ ...model, apiKey, transcript: `用户：${content}\n${persona.name}：${reply}`, signal: controller.signal })
+      .catch(() => ({ actionIntent: fallbackConversationIntent(`${content}\n${reply}`), mood: "responsive", memoryCandidates: [] }));
     const runtime = await runtimePayload();
-    sendAll("pet:action", chooseAnimation(decision.actionIntent, runtime.animations));
+    const reaction = chooseAnimation(decision.actionIntent === "idle" ? fallbackIntent : decision.actionIntent, runtime.animations);
     emit({ requestId, delta: "", done: true });
     if (database.getUnsummarizedMessageCount() >= 24) {
       void agent.summarize({ ...model, apiKey, previous: database.getMemorySummary(petId), transcript: database.getMessages(24).map((message) => `${message.role}: ${message.content}`).join("\n") })
-        .then((summary) => { if (summary) { database.setMemorySummary(summary, 24, petId); void broadcast(); } }).catch(() => undefined);
+        .then((summary) => { if (summary) { database.setMemorySummary(summary, 24, petId); broadcastSnapshot(); } }).catch(() => undefined);
     }
-    await broadcast();
+    broadcastSnapshot();
+    sendAll("pet:action", reaction);
   } catch (error) {
     const message = error instanceof Error && error.name === "AbortError" ? "已停止生成" : error instanceof Error ? error.message : "对话失败";
     emit({ requestId, delta: "", done: true, error: message });
@@ -259,12 +274,14 @@ async function runPresenceTick(): Promise<void> {
       { role: "system", content: `你是${persona.name}。${persona.speakingStyle} 主动说一句不超过35字、具体但不打扰的陪伴话语。不要假装知道屏幕内容。` },
       { role: "user", content: `${currentAppName ? `用户正在使用${currentAppName}。` : ""}现在可以轻声问候。` }
     ] });
-    if (reply) { database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now }); sendAll("pet:speech", reply); sendAll("pet:action", "wave"); await broadcast(); }
+    if (reply) { database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now }); broadcastSnapshot(); sendAll("pet:speech", reply); sendAll("pet:action", "wave"); }
   } catch { /* Proactive failures stay silent. */ } finally { clearTimeout(timeout); }
 }
 
 async function installMotion(path: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
-  const baseIds = new Set((await runtimePayload()).animations.slice(0, 9).map((animation) => animation.id));
+  const baseIds = new Set(["idle", "run-right", "run-left", "wave", "jump", "failed", "stretch", "working", "review"]);
+  const pet = activePet();
+  if (pet.id === "daily" && pet.source === "bundled") baseIds.add("drag");
   const installed = await motionService.install(path, baseIds, activePet().id);
   const summary = { packId: installed.manifest.packId, version: installed.manifest.version, name: installed.manifest.name, enabled: true, animationCount: installed.manifest.animations.length };
   database.saveMotionPack(summary, installed.path);

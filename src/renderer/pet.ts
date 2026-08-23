@@ -40,6 +40,7 @@ function animationDuration(value: PetAnimation): number {
 function play(id: string, protectFromLocal = true): void {
   animation = findAnimation(id);
   animationStarted = performance.now();
+  document.documentElement.dataset.animation = animation.id;
   if (protectFromLocal) {
     localBehaviorEndsAt = 0;
     nextBehaviorAt = Math.max(nextBehaviorAt, animationStarted + animationDuration(animation) + 8_000);
@@ -110,7 +111,7 @@ canvas.addEventListener("pointerleave", () => { if (!dragging) window.souldesk.s
 canvas.addEventListener("pointerdown", (event) => {
   if (!isOpaque(event.clientX, event.clientY)) return;
   dragging = true; pointerStart = { x: event.clientX, y: event.clientY }; dragOffset = { x: event.clientX - x, y: event.clientY - y };
-  canvas.setPointerCapture(event.pointerId); play("review");
+  canvas.setPointerCapture(event.pointerId); play("drag");
 });
 canvas.addEventListener("pointerup", (event) => {
   if (!dragging) return;
@@ -126,6 +127,7 @@ async function applyRuntime(next: PetRuntime): Promise<void> {
   const offscreenContext = offscreen.getContext("2d", { willReadFrequently: true })!; offscreenContext.drawImage(atlas, 0, 0);
   atlasAlpha = offscreenContext.getImageData(0, 0, offscreen.width, offscreen.height).data; atlasWidth = offscreen.width;
   animation = findAnimation("idle"); animationStarted = performance.now();
+  document.documentElement.dataset.animation = animation.id;
   nextBehaviorAt = performance.now() + 12_000; localBehaviorEndsAt = 0;
   document.documentElement.dataset.appReady = "true";
 }
