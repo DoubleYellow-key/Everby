@@ -15,17 +15,21 @@ if (expectedPlatform && process.platform !== expectedPlatform) {
 }
 
 let args;
-if (mode === "test") {
+const schema = spawnSync(python, ["agent/scripts/export_schemas.py"], {
+  stdio: "inherit", env: { ...process.env, PYTHONPATH: "agent", PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" }
+});
+if (schema.status !== 0) process.exit(schema.status ?? 1);
+
+if (mode === "schema") {
+  process.exit(0);
+} else if (mode === "test") {
   args = ["-m", "unittest", "discover", "-s", "agent/tests", "-t", "agent", "-v"];
 } else if (mode === "build") {
   rmSync("agent-dist", { recursive: true, force: true });
   rmSync(".agent-build", { recursive: true, force: true });
-  args = [
-    "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--name", "souldesk-agent",
-    "--distpath", "agent-dist", "--workpath", ".agent-build/work", "--specpath", ".agent-build", "agent/main.py"
-  ];
+  args = ["-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", "agent-dist", "--workpath", ".agent-build/work", "agent/souldesk-agent.spec"];
 } else {
-  console.error("用法：node scripts/python-agent.mjs test|build [arch] [platform]");
+  console.error("用法：node scripts/python-agent.mjs schema|test|build [arch] [platform]");
   process.exit(1);
 }
 

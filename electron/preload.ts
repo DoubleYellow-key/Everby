@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, AppSnapshot, ChatDelta, ModelSettings, PersonaProfile, PetRuntime, SoulDeskApi } from "../src/shared/contracts";
+import type { AppSettings, AppSnapshot, ChatDelta, EmbeddingSettings, ModelSettings, PersonaProfile, PetRuntime, SoulDeskApi } from "../src/shared/contracts";
 
 const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) => {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
@@ -14,6 +14,7 @@ const api: SoulDeskApi = {
   updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
   updatePersona: (patch: Partial<PersonaProfile>) => ipcRenderer.invoke("persona:update", patch),
   updateModel: (patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }) => ipcRenderer.invoke("model:update", patch),
+  updateEmbedding: (patch: Partial<Omit<EmbeddingSettings, "configured">> & { apiKey?: string }) => ipcRenderer.invoke("embedding:update", patch),
   testModel: () => ipcRenderer.invoke("model:test"),
   sendMessage: (content: string) => ipcRenderer.invoke("chat:send", content),
   stopMessage: (requestId: string) => ipcRenderer.invoke("chat:stop", requestId),
@@ -28,6 +29,8 @@ const api: SoulDeskApi = {
   createTodo: (input) => ipcRenderer.invoke("todo:create", input),
   updateTodo: (id, patch) => ipcRenderer.invoke("todo:update", id, patch),
   deleteTodo: (id) => ipcRenderer.invoke("todo:delete", id),
+  deleteMemory: (id) => ipcRenderer.invoke("memory:delete", id),
+  clearMemories: () => ipcRenderer.invoke("memory:clear"),
   onChatDelta: (callback: (value: ChatDelta) => void) => subscribe("chat:delta", callback),
   onSnapshot: (callback: (value: AppSnapshot) => void) => subscribe("app:snapshot-changed", callback),
   onRuntime: (callback: (value: PetRuntime) => void) => subscribe("pet:runtime-changed", callback),

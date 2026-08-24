@@ -1,6 +1,6 @@
 # SoulDesk
 
-SoulDesk 是一个面向 Windows 与 macOS 的本地优先桌面陪伴智能体。它使用 Electron 提供透明桌宠窗口和管理界面，以 Python sidecar 负责对话、记忆摘要与行为规划，并将大模型输出的受控语义意图映射为本地逐帧动画。
+SoulDesk 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使用 Electron 提供透明桌宠窗口和管理界面，以 Python sidecar 负责对话、工具、记忆与后台工作流，并将受控语义意图映射为本地逐帧动画。
 
 当前版本内置原创角色 **Daily**，也能发现用户自行安装的 Petdex 角色。模型离线时，角色仍可走动、待机、响应点击和播放本地动作。
 
@@ -12,19 +12,20 @@ SoulDesk 是一个面向 Windows 与 macOS 的本地优先桌面陪伴智能体�
 - Daily 与本地角色切换，每个角色拥有独立人设、对话记录和记忆
 - Daily 的九组透明逐帧动画，包括专属的电脑敲代码动作
 - OpenAI Chat Completions 兼容接口，支持流式回复、取消、超时和有限重试
-- Python 智能体负责对话、滚动摘要和受 Zod 约束的行为决策
-- 本地待机调度、主动陪伴、免打扰时段和低频模型动作选择
+- LangChain `create_agent` 与 LangGraph 状态图负责对话、工具循环、短期 checkpoint 和能力降级
+- Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
-- SQLite 本地记忆与 Electron `safeStorage` API Key 保护
+- SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
 - `.soulmotion` 动作扩展包的验证、安装、启停和卸载
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
 
 ## 快速开始
 
-需要 Node.js 24+、pnpm 11+ 和 Python 3.9+。
+需要 Node.js 24+、pnpm 11+ 和 Python 3.10+。
 
 ```bash
 pnpm install --frozen-lockfile
+python -m pip install -r agent/requirements-runtime.txt
 pnpm agent:test
 pnpm dev
 ```
@@ -33,7 +34,7 @@ pnpm dev
 
 ## 配置模型
 
-在“模型”页面填写 OpenAI 兼容服务：
+在“模型”页面分别填写 OpenAI 兼容的聊天与 Embedding 服务。Embedding 使用独立配置和独立加密 API Key：
 
 | 设置 | OpenAI 示例 | Ollama 示例 |
 | --- | --- | --- |
@@ -55,7 +56,7 @@ API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返
 
 可在管理窗口的“计划”页面添加、完成或删除清单项，并分别设置截止时间和提醒时间。提醒支持一次性与每日重复；即使模型离线，到点后的系统通知、桌宠气泡和本地响应仍然可用。
 
-也可以直接在对话中提出“下午三点提醒我喝水”“把整理周报加入计划”或“完成整理周报”。Python 智能体只会产出经过校验的新增与完成操作，不会自行删除项目。开启“AI 清单关注”后，角色会在非免打扰时段低频查看临近或逾期项目，并可结合当前时间和已授权的前台应用名称给出简短提醒。
+也可以直接在对话中提出“下午三点提醒我喝水”“把整理周报加入计划”或“完成整理周报”。Python 智能体只暴露新增与完成工具，不提供删除工具；完成项目前必须先查询准确 ID。模型不支持工具调用时会降级为纯陪伴聊天，已有记忆召回仍可用。
 
 ## 架构
 
@@ -63,16 +64,17 @@ API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返
 flowchart LR
     UI["Electron 桌宠与界面"] --> IPC["受限 IPC"]
     IPC --> MAIN["Electron 主进程"]
-    MAIN --> DB["SQLite 与 safeStorage"]
+    MAIN --> SECRET["safeStorage"]
     MAIN --> AGENT["Python sidecar"]
+    AGENT --> DB["SQLite / checkpoint / FTS / vectors"]
     AGENT --> MODEL["OpenAI 兼容 API / Ollama"]
     MAIN --> MOTION["本地动作状态机"]
     MOTION --> UI
 ```
 
 - `electron/`：窗口生命周期、IPC、安全存储、角色目录和动作包服务
-- `agent/`：Python 对话、行为规划与摘要服务
-- `src/core/`：时间线、动作意图映射和清单校验
+- `agent/`：Python LangChain/LangGraph 智能体、工具、记忆、持久化、调度和 protocol v2
+- `src/core/`：时间线与动作意图映射
 - `src/renderer/`：桌宠、聊天和管理界面
 - `resources/runtime-pets/`：可随应用分发的内置角色资源
 - `resources/pet-qa/`：原创角色的动画检查图与验证结果
@@ -114,7 +116,7 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Win
 
 ## 数据与隐私
 
-应用数据位于 Electron `userData` 目录。聊天、摘要、人设和设置保存在本机 SQLite 数据库中。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
+应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆、工作流和 checkpoint 表；Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
 
 锁屏、暂停和免打扰期间不会触发主动模型调用。前台应用感知可以随时在“隐私”页面关闭。
 

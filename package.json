@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "agent:test": "node scripts/python-agent.mjs test",
+    "agent:schema": "node scripts/python-agent.mjs schema",
     "agent:build": "node scripts/python-agent.mjs build",
     "agent:smoke": "tsx scripts/smoke-agent.ts",
     "dist:win": "node scripts/python-agent.mjs build x64 win32 && pnpm build && electron-builder --win nsis portable --x64",

@@ -8,9 +8,8 @@ import {
   type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle
 } from "electron";
 import { createCodexRuntime } from "../src/core/codex-atlas";
-import { chooseAnimation, fallbackConversationIntent } from "../src/core/behavior";
-import { selectTodosForReview } from "../src/core/reminders";
-import type { AppSettings, AppSnapshot, ChatDelta, PetRuntime, PetSummary, TodoOperation } from "../src/shared/contracts";
+import { chooseAnimation } from "../src/core/behavior";
+import type { AgentSnapshot, AppSettings, AppSnapshot, ChatDelta, PetRuntime, PetSummary } from "../src/shared/contracts";
 import { AppDatabase } from "./services/database";
 import { MotionService } from "./services/motion-service";
 import { discoverPets, type CatalogPet } from "./services/pet-catalog";
@@ -23,22 +22,20 @@ if (process.env.SOULDESK_E2E === "1" && process.env.SOULDESK_E2E_USER_DATA) app.
 let database: AppDatabase;
 let motionService: MotionService;
 let secretStore: SecretStore;
+let embeddingSecretStore: SecretStore;
 let agent: PythonAgentClient;
 let managerWindow: BrowserWindow | null = null;
 let petWindow: BrowserWindow | null = null;
 let chatWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let currentAppName = "";
-let lastBehaviorPlanAt = 0;
-let nextProactiveAt = Date.now() + 60 * 60_000;
-let proactiveDay = "";
-let proactiveCount = 0;
-let lastTaskReviewAt = 0;
-let taskReviewDay = "";
-let taskReviewCount = 0;
-const hourlyPlans: number[] = [];
 const requests = new Map<string, AbortController>();
 let petCatalog: CatalogPet[] = [];
+let agentSnapshot: AgentSnapshot = {
+  petId: "daily", persona: { petId: "daily", name: "Daily", background: "", speakingStyle: "", userAddress: "你", boundaries: "" },
+  messages: [], todos: [], memories: [], memorySummary: "", agentCapabilities: { streaming: false, toolCalling: false, embedding: false },
+  agentStatus: "unconfigured", embeddingStatus: "unconfigured"
+};
 
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const preload = join(__dirname, "../preload/preload.js");
@@ -62,6 +59,10 @@ const personaPatchSchema = z.object({ name: z.string().trim().min(1).max(80), ba
 const modelPatchSchema = z.object({
   baseUrl: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "模型地址必须使用 HTTP 或 HTTPS"),
   model: z.string().trim().min(1).max(160), temperature: z.number().min(0).max(2), apiKey: z.string().max(2_000).optional()
+}).partial().strict();
+const embeddingPatchSchema = z.object({
+  baseUrl: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "模型地址必须使用 HTTP 或 HTTPS"),
+  model: z.string().trim().min(1).max(160), apiKey: z.string().max(2_000).optional()
 }).partial().strict();
 const packIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const todoIdSchema = z.string().uuid();
@@ -192,34 +193,28 @@ function snapshot(): AppSnapshot {
   const pet = activePet();
   const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item) }));
   return {
-    activePetId: pet.id, pets, persona: database.getPersona(pet.id, pet.name, pet.description), model: database.getModel(), settings: database.getSettings(),
-    messages: database.getMessages(), memorySummary: database.getMemorySummary(), motionPacks: database.listMotionPacks(), todos: database.listTodos()
+    activePetId: pet.id, pets, persona: agentSnapshot.persona, model: database.getModel(), embedding: database.getEmbedding(), settings: database.getSettings(),
+    messages: agentSnapshot.messages, memorySummary: agentSnapshot.memorySummary, motionPacks: database.listMotionPacks(), todos: agentSnapshot.todos,
+    memories: agentSnapshot.memories, agentCapabilities: agentSnapshot.agentCapabilities, agentStatus: agentSnapshot.agentStatus,
+    embeddingStatus: agentSnapshot.embeddingStatus
   };
 }
 
-function todoContext(now = Date.now()): string {
-  const pending = database.listTodos().filter((item) => item.completedAt === null).slice(0, 30);
-  if (pending.length === 0) return "当前计划清单为空。";
-  const lines = pending.map((item) => {
-    const schedule = item.remindAt ? `提醒 ${new Date(item.remindAt).toLocaleString()}` : item.dueAt ? `截止 ${new Date(item.dueAt).toLocaleString()}` : "未设时间";
-    return `- ${item.title}（${schedule}${item.repeat === "daily" ? "，每日重复" : ""}）`;
+async function configureAgent(): Promise<void> {
+  const model = database.getModel(); const embedding = database.getEmbedding();
+  const pet = activePet();
+  const [apiKey, embeddingApiKey] = await Promise.all([secretStore.getApiKey(), embeddingSecretStore.getApiKey()]);
+  await agent.health();
+  await agent.configure({
+    databasePath: join(app.getPath("userData"), "souldesk.db"), petId: pet.id, petName: pet.name, petDescription: pet.description,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    chat: { ...model, apiKey: apiKey ?? "" }, embedding: { ...embedding, apiKey: embeddingApiKey ?? "" }
   });
-  return `当前本地时间：${new Date(now).toString()}\n未完成计划：\n${lines.join("\n")}`;
+  agentSnapshot = await agent.snapshot(database.getActivePetId());
 }
 
-function applyTodoOperations(operations: TodoOperation[]): void {
-  for (const operation of operations) {
-    if (operation.type === "create") {
-      const duplicate = database.listTodos().some((item) => item.completedAt === null && item.title === operation.title && item.remindAt === (operation.remindAt ?? null));
-      if (!duplicate) database.createTodo(operation, "chat");
-      continue;
-    }
-    const title = operation.title.trim().toLocaleLowerCase();
-    const pending = database.listTodos().filter((item) => item.completedAt === null);
-    const match = pending.find((item) => item.title.toLocaleLowerCase() === title)
-      ?? pending.find((item) => item.title.toLocaleLowerCase().includes(title) || title.includes(item.title.toLocaleLowerCase()));
-    if (match) database.updateTodo(match.id, { completed: true });
-  }
+async function refreshAgentSnapshot(): Promise<void> {
+  agentSnapshot = await agent.snapshot(database.getActivePetId());
 }
 
 function sendAll(channel: string, payload: unknown): void {
@@ -231,6 +226,7 @@ function broadcastSnapshot(): void {
 }
 
 async function broadcast(): Promise<void> {
+  await refreshAgentSnapshot();
   broadcastSnapshot();
   sendAll("pet:runtime-changed", await runtimePayload());
 }
@@ -242,118 +238,21 @@ async function runChat(requestId: string, content: string): Promise<void> {
   const timeout = setTimeout(() => controller.abort(), 45_000);
   const emit = (delta: ChatDelta) => sendAll("chat:delta", delta);
   try {
-    const apiKey = await secretStore.getApiKey();
-    const model = database.getModel();
-    if (!apiKey || !model.configured) throw new Error("请先在模型设置中配置 API");
-    const userMessage = { id: crypto.randomUUID(), role: "user" as const, content, createdAt: Date.now() };
-    database.addMessage(userMessage);
-    broadcastSnapshot();
+    if (!database.getModel().configured) throw new Error("请先在模型设置中配置 API");
     sendAll("pet:action", "review");
-    const persona = database.getPersona();
-    const system = [
-      `你是桌面陪伴角色 ${persona.name}。`, persona.background, persona.speakingStyle,
-      `称呼用户为：${persona.userAddress}。`, persona.boundaries,
-      database.getMemorySummary() ? `长期记忆摘要：${database.getMemorySummary()}` : "",
-      todoContext(),
-      "当用户明确要求添加计划、设置提醒或完成计划时，请自然确认；本地计划工具会在回复后执行。不要声称执行删除操作。",
-      currentAppName ? `用户当前正在使用的应用：${currentAppName}。不要猜测应用中的具体内容。` : ""
-    ].filter(Boolean).join("\n");
-    const messages = [{ role: "system" as const, content: system }, ...database.getMessages(12).map((message) => ({ role: message.role, content: message.content }))];
-    const reply = await agent.streamReply({ ...model, apiKey, messages, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
-    if (!reply.trim()) throw new Error("模型没有返回文字");
+    const result = await agent.streamReply({ petId, content, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
+    if (!result.content.trim()) throw new Error("模型没有返回文字");
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
-    database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: Date.now() });
-    const fallbackIntent = fallbackConversationIntent(`${content}\n${reply}`);
-    const decision = await agent.planBehavior({ ...model, apiKey, transcript: `${todoContext()}\n用户：${content}\n${persona.name}：${reply}`, signal: controller.signal })
-      .catch(() => ({ actionIntent: fallbackConversationIntent(`${content}\n${reply}`), mood: "responsive", memoryCandidates: [], todoOperations: [] }));
-    applyTodoOperations(decision.todoOperations);
     const runtime = await runtimePayload();
-    const reaction = chooseAnimation(decision.actionIntent === "idle" ? fallbackIntent : decision.actionIntent, runtime.animations);
+    const reaction = chooseAnimation(result.actionIntent as any, runtime.animations);
     emit({ requestId, delta: "", done: true });
-    if (database.getUnsummarizedMessageCount() >= 24) {
-      void agent.summarize({ ...model, apiKey, previous: database.getMemorySummary(petId), transcript: database.getMessages(24).map((message) => `${message.role}: ${message.content}`).join("\n") })
-        .then((summary) => { if (summary) { database.setMemorySummary(summary, 24, petId); broadcastSnapshot(); } }).catch(() => undefined);
-    }
-    broadcastSnapshot();
+    await refreshAgentSnapshot(); broadcastSnapshot();
     sendAll("pet:action", reaction);
   } catch (error) {
     const message = error instanceof Error && error.name === "AbortError" ? "已停止生成" : error instanceof Error ? error.message : "对话失败";
     emit({ requestId, delta: "", done: true, error: message });
     sendAll("pet:action", "idle");
   } finally { clearTimeout(timeout); requests.delete(requestId); }
-}
-
-function inQuietHours(settings: AppSettings, now = new Date()): boolean {
-  const minutes = now.getHours() * 60 + now.getMinutes();
-  const parse = (value: string) => { const [hours, minute] = value.split(":").map(Number); return hours * 60 + minute; };
-  const start = parse(settings.quietHoursStart); const end = parse(settings.quietHoursEnd);
-  return start > end ? minutes >= start || minutes < end : minutes >= start && minutes < end;
-}
-
-async function runPresenceTick(): Promise<void> {
-  const settings = database.getSettings();
-  const now = Date.now();
-  if (settings.paused || inQuietHours(settings) || powerMonitor.getSystemIdleState(60) === "locked") return;
-  const model = database.getModel(); const apiKey = await secretStore.getApiKey();
-  if (!model.configured || !apiKey || requests.size > 0) return;
-  while (hourlyPlans[0] && hourlyPlans[0] < now - 60 * 60_000) hourlyPlans.shift();
-  if (now - lastBehaviorPlanAt >= 15 * 60_000 && hourlyPlans.length < 4) {
-    lastBehaviorPlanAt = now; hourlyPlans.push(now);
-    void agent.planBehavior({ ...model, apiKey, transcript: `当前时间 ${new Date().toLocaleTimeString()}。${currentAppName ? `用户正在使用 ${currentAppName}。` : ""}选择一个安静自然的桌宠动作。` })
-      .then(async (decision) => sendAll("pet:action", chooseAnimation(decision.actionIntent, (await runtimePayload()).animations))).catch(() => undefined);
-  }
-  if (settings.taskAssistantEnabled && now - lastTaskReviewAt >= 30 * 60_000) {
-    const reviewDay = new Date(now).toISOString().slice(0, 10);
-    if (taskReviewDay !== reviewDay) { taskReviewDay = reviewDay; taskReviewCount = 0; }
-    const candidates = selectTodosForReview(database.listTodos(), now);
-    if (candidates.length > 0 && taskReviewCount < 4) {
-      lastTaskReviewAt = now; taskReviewCount += 1;
-      const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 45_000);
-      try {
-        const persona = database.getPersona();
-        const plans = candidates.map((item) => `- ${item.title}：${item.dueAt && item.dueAt < now ? "已逾期" : "临近"}`).join("\n");
-        const reply = await agent.streamReply({ ...model, apiKey, signal: controller.signal, onDelta: () => undefined, messages: [
-          { role: "system", content: `你是${persona.name}。${persona.speakingStyle} 根据计划清单主动提醒一句，不超过45字，具体、克制，不声称看到了屏幕内容。` },
-          { role: "user", content: `${todoContext(now)}\n需要关注：\n${plans}${currentAppName ? `\n用户正在使用 ${currentAppName}。` : ""}` }
-        ] });
-        if (reply) {
-          database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now });
-          broadcastSnapshot(); sendAll("pet:speech", reply);
-          sendAll("pet:action", chooseAnimation("encourage", (await runtimePayload()).animations));
-        }
-      } catch { /* Task reviews are opportunistic. */ } finally { clearTimeout(timeout); }
-    }
-  }
-  const day = new Date().toISOString().slice(0, 10);
-  if (proactiveDay !== day) { proactiveDay = day; proactiveCount = 0; }
-  if (!settings.proactiveEnabled || now < nextProactiveAt || proactiveCount >= 4) return;
-  proactiveCount += 1; nextProactiveAt = now + (60 + Math.random() * 60) * 60_000;
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 45_000);
-  try {
-    const persona = database.getPersona();
-    const reply = await agent.streamReply({ ...model, apiKey, signal: controller.signal, onDelta: () => undefined, messages: [
-      { role: "system", content: `你是${persona.name}。${persona.speakingStyle} 主动说一句不超过35字、具体但不打扰的陪伴话语。不要假装知道屏幕内容。` },
-      { role: "user", content: `${currentAppName ? `用户正在使用${currentAppName}。` : ""}现在可以轻声问候。` }
-    ] });
-    if (reply) { database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: reply, createdAt: now }); broadcastSnapshot(); sendAll("pet:speech", reply); sendAll("pet:action", "wave"); }
-  } catch { /* Proactive failures stay silent. */ } finally { clearTimeout(timeout); }
-}
-
-async function runReminderTick(): Promise<void> {
-  const settings = database.getSettings();
-  if (!settings.remindersEnabled || powerMonitor.getSystemIdleState(60) === "locked") return;
-  const due = database.claimDueReminders();
-  if (due.length === 0) return;
-  const names = due.slice(0, 3).map((item) => item.title);
-  const message = due.length === 1 ? `提醒时间到了：${names[0]}` : `提醒时间到了：${names.join("、")}${due.length > 3 ? `等 ${due.length} 项` : ""}`;
-  database.addMessage({ id: crypto.randomUUID(), role: "assistant", content: message, createdAt: Date.now() });
-  broadcastSnapshot(); sendAll("pet:speech", message);
-  sendAll("pet:action", chooseAnimation("encourage", (await runtimePayload()).animations));
-  if (Notification.isSupported()) {
-    const notification = new Notification({ title: "SoulDesk 提醒", body: message, silent: false });
-    notification.on("click", openChat);
-    notification.show();
-  }
 }
 
 async function installMotion(path: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
@@ -376,6 +275,7 @@ function registerIpc(): void {
     if (!petCatalog.some((pet) => pet.id === id)) throw new Error("角色不存在或资源不可用");
     for (const controller of requests.values()) controller.abort();
     database.setActivePetId(id);
+    await configureAgent();
     sendAll("pet:action", "idle");
     await broadcast();
   });
@@ -386,23 +286,29 @@ function registerIpc(): void {
   ipcMain.handle("settings:update", async (event, patch: Partial<AppSettings>) => {
     trusted(event); const settings = database.updateSettings(settingsPatchSchema.parse(patch)); petWindow?.setAlwaysOnTop(settings.alwaysOnTop); settings.visible ? petWindow?.showInactive() : petWindow?.hide(); await broadcast(); return settings;
   });
-  ipcMain.handle("persona:update", async (event, patch) => { trusted(event); const value = database.updatePersona(personaPatchSchema.parse(patch)); await broadcast(); return value; });
+  ipcMain.handle("persona:update", async (event, patch) => { trusted(event); const value = await agent.updatePersona(database.getActivePetId(), personaPatchSchema.parse(patch)); await broadcast(); return value; });
   ipcMain.handle("model:update", async (event, patch) => {
-    trusted(event); const { apiKey, ...modelPatch } = modelPatchSchema.parse(patch ?? {}); if (apiKey?.trim()) await secretStore.setApiKey(apiKey.trim()); const value = database.updateModel(modelPatch, Boolean(apiKey?.trim()) || database.getModel().configured); await broadcast(); return value;
+    trusted(event); const { apiKey, ...modelPatch } = modelPatchSchema.parse(patch ?? {}); if (apiKey?.trim()) await secretStore.setApiKey(apiKey.trim()); const value = database.updateModel(modelPatch, Boolean(apiKey?.trim()) || database.getModel().configured); await configureAgent(); await broadcast(); return value;
+  });
+  ipcMain.handle("embedding:update", async (event, patch) => {
+    trusted(event); const { apiKey, ...embeddingPatch } = embeddingPatchSchema.parse(patch ?? {}); if (apiKey?.trim()) await embeddingSecretStore.setApiKey(apiKey.trim());
+    const value = database.updateEmbedding(embeddingPatch, Boolean(apiKey?.trim()) || database.getEmbedding().configured); await configureAgent(); await broadcast(); return value;
   });
   ipcMain.handle("model:test", async (event) => {
-    trusted(event); const key = await secretStore.getApiKey(); const model = database.getModel(); if (!key) return { ok: false, message: "尚未保存 API Key" };
-    try { await agent.planBehavior({ ...model, apiKey: key, transcript: "Reply with an idle decision." }); return { ok: true, message: "Python 智能体连接成功" }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : "连接失败" }; }
+    trusted(event); const key = await secretStore.getApiKey(); if (!key) return { ok: false, message: "尚未保存 API Key" };
+    try { const capabilities = await agent.probe(); await refreshAgentSnapshot(); broadcastSnapshot(); return { ok: capabilities.streaming, message: capabilities.toolCalling ? "连接成功，工具调用可用" : "聊天可用，但当前模型不支持工具调用" }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : "连接失败" }; }
   });
   ipcMain.handle("chat:send", (event, content: unknown) => { trusted(event); if (typeof content !== "string" || !content.trim() || content.length > 4_000) throw new Error("消息内容无效"); const id = crypto.randomUUID(); void runChat(id, content.trim()); return id; });
   ipcMain.handle("chat:stop", (event, id: unknown) => { trusted(event); if (typeof id === "string") requests.get(id)?.abort(); });
-  ipcMain.handle("chat:clear", async (event) => { trusted(event); database.clearMessages(); await broadcast(); });
+  ipcMain.handle("chat:clear", async (event) => { trusted(event); await agent.clearConversation(database.getActivePetId()); await broadcast(); });
   ipcMain.handle("motion:import", async (event) => { trusted(event); const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "SoulDesk 动作扩展", extensions: ["soulmotion"] }] }); return result.canceled || !result.filePaths[0] ? null : installMotion(result.filePaths[0]); });
   ipcMain.handle("motion:enabled", async (event, packId: unknown, enabled: unknown) => { trusted(event); const id = packIdSchema.parse(packId); if (typeof enabled !== "boolean") throw new Error("扩展状态无效"); database.setMotionPackEnabled(id, enabled); await broadcast(); });
   ipcMain.handle("motion:remove", async (event, packId: unknown) => { trusted(event); const id = packIdSchema.parse(packId); const path = database.getMotionPackPath(id); database.deleteMotionPack(id); if (path) await rm(path, { recursive: true, force: true }); await broadcast(); });
-  ipcMain.handle("todo:create", (event, input: unknown) => { trusted(event); const todo = database.createTodo(todoCreateSchema.parse(input)); broadcastSnapshot(); return todo; });
-  ipcMain.handle("todo:update", (event, id: unknown, patch: unknown) => { trusted(event); const todo = database.updateTodo(todoIdSchema.parse(id), todoUpdateSchema.parse(patch)); broadcastSnapshot(); return todo; });
-  ipcMain.handle("todo:delete", (event, id: unknown) => { trusted(event); database.deleteTodo(todoIdSchema.parse(id)); broadcastSnapshot(); });
+  ipcMain.handle("todo:create", async (event, input: unknown) => { trusted(event); const todo = await agent.createTodo(database.getActivePetId(), todoCreateSchema.parse(input)); await broadcast(); return todo; });
+  ipcMain.handle("todo:update", async (event, id: unknown, patch: unknown) => { trusted(event); const todo = await agent.updateTodo(database.getActivePetId(), todoIdSchema.parse(id), todoUpdateSchema.parse(patch)); await broadcast(); return todo; });
+  ipcMain.handle("todo:delete", async (event, id: unknown) => { trusted(event); await agent.deleteTodo(database.getActivePetId(), todoIdSchema.parse(id)); await broadcast(); });
+  ipcMain.handle("memory:delete", async (event, id: unknown) => { trusted(event); await agent.deleteMemory(database.getActivePetId(), todoIdSchema.parse(id)); await broadcast(); });
+  ipcMain.handle("memory:clear", async (event) => { trusted(event); await agent.clearMemories(database.getActivePetId()); await broadcast(); });
 }
 
 function createTray(): void {
@@ -427,7 +333,22 @@ async function initialize(): Promise<void> {
     encrypt: async (value) => safeStorage.encryptStringAsync(value),
     decrypt: async (value) => (await safeStorage.decryptStringAsync(value)).result
   });
+  embeddingSecretStore = new SecretStore(join(userData, "embedding-api-key.bin"), {
+    encrypt: async (value) => safeStorage.encryptStringAsync(value),
+    decrypt: async (value) => (await safeStorage.decryptStringAsync(value)).result
+  });
   await refreshPetCatalog();
+  await configureAgent();
+  agent.onEvent((event) => {
+    if (event.type === "pet_action" && typeof event.data.actionIntent === "string") {
+      void runtimePayload().then((runtime) => sendAll("pet:action", chooseAnimation(event.data.actionIntent as any, runtime.animations)));
+    }
+    if (event.type === "notification_requested" && typeof event.data.message === "string" && Notification.isSupported()) {
+      const notification = new Notification({ title: "SoulDesk 提醒", body: event.data.message, silent: false });
+      notification.on("click", openChat); notification.show();
+    }
+    if (["state_changed", "tool_finished"].includes(event.type)) void refreshAgentSnapshot().then(broadcastSnapshot).catch(() => undefined);
+  });
 
   protocol.handle("souldesk", async (request) => {
     const url = new URL(request.url);
@@ -463,10 +384,11 @@ async function initialize(): Promise<void> {
   screen.on("display-added", resizePetWindow); screen.on("display-removed", resizePetWindow); screen.on("display-metrics-changed", resizePetWindow);
   setInterval(() => {
     if (!database.getSettings().activeAppEnabled || powerMonitor.getSystemIdleState(60) === "locked") { currentAppName = ""; return; }
-    void activeWindow({ accessibilityPermission: false, screenRecordingPermission: false }).then((value) => { currentAppName = value?.owner.name === "SoulDesk" ? "" : value?.owner.name ?? ""; }).catch(() => { currentAppName = ""; });
+    void activeWindow({ accessibilityPermission: false, screenRecordingPermission: false }).then((value) => {
+      currentAppName = value?.owner.name === "SoulDesk" ? "" : value?.owner.name ?? "";
+      void agent.call("runtime.presence", { petId: database.getActivePetId(), activeAppName: currentAppName, idleState: powerMonitor.getSystemIdleState(60), settings: database.getSettings() }).catch(() => undefined);
+    }).catch(() => { currentAppName = ""; });
   }, 15_000).unref();
-  setInterval(() => void runPresenceTick(), 60_000).unref();
-  setInterval(() => void runReminderTick(), 15_000).unref();
 }
 
 app.whenReady().then(initialize);

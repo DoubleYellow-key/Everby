@@ -1,0 +1,334 @@
+{
+  "RpcRequest": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Id",
+        "type": "string"
+      },
+      "protocolVersion": {
+        "const": 2,
+        "title": "Protocolversion",
+        "type": "integer"
+      },
+      "method": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Method",
+        "type": "string"
+      },
+      "params": {
+        "additionalProperties": true,
+        "title": "Params",
+        "type": "object"
+      }
+    },
+    "required": [
+      "id",
+      "protocolVersion",
+      "method"
+    ],
+    "title": "RpcRequest",
+    "type": "object"
+  },
+  "RpcEvent": {
+    "additionalProperties": false,
+    "properties": {
+      "protocolVersion": {
+        "const": 2,
+        "default": 2,
+        "title": "Protocolversion",
+        "type": "integer"
+      },
+      "type": {
+        "title": "Type",
+        "type": "string"
+      },
+      "requestId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Requestid"
+      },
+      "data": {
+        "additionalProperties": true,
+        "title": "Data",
+        "type": "object"
+      }
+    },
+    "required": [
+      "type"
+    ],
+    "title": "RpcEvent",
+    "type": "object"
+  },
+  "RpcResult": {
+    "$defs": {
+      "RpcError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "RpcError",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "protocolVersion": {
+        "const": 2,
+        "default": 2,
+        "title": "Protocolversion",
+        "type": "integer"
+      },
+      "id": {
+        "title": "Id",
+        "type": "string"
+      },
+      "result": {
+        "default": null,
+        "title": "Result"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/RpcError"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "RpcResult",
+    "type": "object"
+  },
+  "AgentCapabilities": {
+    "properties": {
+      "streaming": {
+        "default": false,
+        "title": "Streaming",
+        "type": "boolean"
+      },
+      "toolCalling": {
+        "default": false,
+        "title": "Toolcalling",
+        "type": "boolean"
+      },
+      "embedding": {
+        "default": false,
+        "title": "Embedding",
+        "type": "boolean"
+      }
+    },
+    "title": "AgentCapabilities",
+    "type": "object"
+  },
+  "TodoItem": {
+    "properties": {
+      "id": {
+        "title": "Id",
+        "type": "string"
+      },
+      "title": {
+        "title": "Title",
+        "type": "string"
+      },
+      "notes": {
+        "title": "Notes",
+        "type": "string"
+      },
+      "dueAt": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Dueat"
+      },
+      "remindAt": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Remindat"
+      },
+      "repeat": {
+        "enum": [
+          "none",
+          "daily"
+        ],
+        "title": "Repeat",
+        "type": "string"
+      },
+      "source": {
+        "enum": [
+          "manual",
+          "chat"
+        ],
+        "title": "Source",
+        "type": "string"
+      },
+      "createdAt": {
+        "title": "Createdat",
+        "type": "integer"
+      },
+      "updatedAt": {
+        "title": "Updatedat",
+        "type": "integer"
+      },
+      "completedAt": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Completedat"
+      },
+      "lastRemindedAt": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Lastremindedat"
+      }
+    },
+    "required": [
+      "id",
+      "title",
+      "notes",
+      "dueAt",
+      "remindAt",
+      "repeat",
+      "source",
+      "createdAt",
+      "updatedAt",
+      "completedAt",
+      "lastRemindedAt"
+    ],
+    "title": "TodoItem",
+    "type": "object"
+  },
+  "MemoryItem": {
+    "properties": {
+      "id": {
+        "title": "Id",
+        "type": "string"
+      },
+      "type": {
+        "enum": [
+          "preference",
+          "identity",
+          "goal",
+          "project",
+          "habit",
+          "relationship",
+          "commitment"
+        ],
+        "title": "Type",
+        "type": "string"
+      },
+      "content": {
+        "title": "Content",
+        "type": "string"
+      },
+      "sourceMessageId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Sourcemessageid"
+      },
+      "confidence": {
+        "title": "Confidence",
+        "type": "number"
+      },
+      "embeddingModel": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Embeddingmodel"
+      },
+      "createdAt": {
+        "title": "Createdat",
+        "type": "integer"
+      },
+      "updatedAt": {
+        "title": "Updatedat",
+        "type": "integer"
+      },
+      "accessedAt": {
+        "title": "Accessedat",
+        "type": "integer"
+      },
+      "indexed": {
+        "title": "Indexed",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "type",
+      "content",
+      "sourceMessageId",
+      "confidence",
+      "embeddingModel",
+      "createdAt",
+      "updatedAt",
+      "accessedAt",
+      "indexed"
+    ],
+    "title": "MemoryItem",
+    "type": "object"
+  }
+}

@@ -73,6 +73,45 @@ export interface ModelSettings {
   configured: boolean;
 }
 
+export interface EmbeddingSettings {
+  baseUrl: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface AgentCapabilities {
+  streaming: boolean;
+  toolCalling: boolean;
+  embedding: boolean;
+}
+
+export type AgentStatus = "unconfigured" | "ready" | "degraded" | "busy" | "error";
+
+export interface MemoryItem {
+  id: string;
+  type: "preference" | "identity" | "goal" | "project" | "habit" | "relationship" | "commitment";
+  content: string;
+  sourceMessageId: string | null;
+  confidence: number;
+  embeddingModel: string | null;
+  createdAt: number;
+  updatedAt: number;
+  accessedAt: number;
+  indexed: boolean;
+}
+
+export interface AgentSnapshot {
+  petId: string;
+  persona: PersonaProfile;
+  messages: ChatMessage[];
+  todos: TodoItem[];
+  memories: MemoryItem[];
+  memorySummary: string;
+  agentCapabilities: AgentCapabilities;
+  agentStatus: AgentStatus;
+  embeddingStatus: "unconfigured" | "ready" | "degraded" | "indexing";
+}
+
 export interface PresenceSettings {
   activeAppEnabled: boolean;
   proactiveEnabled: boolean;
@@ -117,11 +156,16 @@ export interface AppSnapshot {
   pets: PetSummary[];
   persona: PersonaProfile;
   model: ModelSettings;
+  embedding: EmbeddingSettings;
   settings: AppSettings;
   messages: ChatMessage[];
   memorySummary: string;
   motionPacks: MotionPackSummary[];
   todos: TodoItem[];
+  memories: MemoryItem[];
+  agentCapabilities: AgentCapabilities;
+  agentStatus: AgentStatus;
+  embeddingStatus: AgentSnapshot["embeddingStatus"];
 }
 
 export interface ChatRequest { content: string }
@@ -134,6 +178,7 @@ export interface SoulDeskApi {
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   updatePersona(patch: Partial<PersonaProfile>): Promise<PersonaProfile>;
   updateModel(patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }): Promise<ModelSettings>;
+  updateEmbedding(patch: Partial<Omit<EmbeddingSettings, "configured">> & { apiKey?: string }): Promise<EmbeddingSettings>;
   testModel(): Promise<{ ok: boolean; message: string }>;
   sendMessage(content: string): Promise<string>;
   stopMessage(requestId: string): Promise<void>;
@@ -148,6 +193,8 @@ export interface SoulDeskApi {
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
   updateTodo(id: string, patch: UpdateTodoInput): Promise<TodoItem>;
   deleteTodo(id: string): Promise<void>;
+  deleteMemory(id: string): Promise<void>;
+  clearMemories(): Promise<void>;
   onChatDelta(callback: (delta: ChatDelta) => void): () => void;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onRuntime(callback: (runtime: PetRuntime) => void): () => void;
