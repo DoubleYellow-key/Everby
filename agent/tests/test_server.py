@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from souldesk_agent.server import AgentServer
+from everby_agent.server import AgentServer
 
 
 class AgentServerTests(unittest.TestCase):

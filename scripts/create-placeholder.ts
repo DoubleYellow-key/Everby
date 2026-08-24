@@ -57,6 +57,6 @@ await Promise.all([0, 1].map((column) => sharp(join(output, "spritesheet.webp"))
 await sharp(appIcon(64, true)).resize(32, 32).png().toFile(join(output, "tray.png"));
 await sharp(appIcon(512)).png().toFile(join(process.cwd(), "build/icon.png"));
 await writeFile(join(output, "pet.json"), `${JSON.stringify({
-  id: "placeholder", displayName: "SoulDesk Placeholder", description: "Generated fallback for character development and format tests.",
+  id: "placeholder", displayName: "Everby Placeholder", description: "Generated fallback for character development and format tests.",
   spritesheetPath: "spritesheet.webp", kind: "character", generated: true
 }, null, 2)}\n`);

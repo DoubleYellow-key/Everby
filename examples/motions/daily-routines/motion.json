@@ -1,0 +1,64 @@
+{
+  "formatVersion": 1,
+  "packId": "daily-routines",
+  "version": "1.0.0",
+  "name": "Daily 日常动作组合",
+  "targetPetId": "daily",
+  "canvas": { "width": 192, "height": 208, "anchorX": 96, "anchorY": 208 },
+  "animations": [
+    {
+      "id": "daily-cheer-combo",
+      "label": "欢呼组合",
+      "loop": false,
+      "weight": 1,
+      "intents": ["celebrate", "happy", "encourage"],
+      "frames": [
+        { "src": "assets/cheer/000.webp", "durationMs": 220 },
+        { "src": "assets/cheer/001.webp", "durationMs": 220 },
+        { "src": "assets/cheer/002.webp", "durationMs": 260 },
+        { "src": "assets/cheer/003.webp", "durationMs": 220 },
+        { "src": "assets/cheer/004.webp", "durationMs": 160 },
+        { "src": "assets/cheer/005.webp", "durationMs": 160 },
+        { "src": "assets/cheer/006.webp", "durationMs": 180 },
+        { "src": "assets/cheer/007.webp", "durationMs": 160 },
+        { "src": "assets/cheer/008.webp", "durationMs": 220 }
+      ]
+    },
+    {
+      "id": "daily-focus-cycle",
+      "label": "专注循环",
+      "loop": true,
+      "weight": 1,
+      "intents": ["work", "think", "wait"],
+      "frames": [
+        { "src": "assets/focus/000.webp", "durationMs": 360 },
+        { "src": "assets/focus/001.webp", "durationMs": 360 },
+        { "src": "assets/focus/002.webp", "durationMs": 360 },
+        { "src": "assets/focus/003.webp", "durationMs": 360 },
+        { "src": "assets/focus/004.webp", "durationMs": 280 },
+        { "src": "assets/focus/005.webp", "durationMs": 280 },
+        { "src": "assets/focus/006.webp", "durationMs": 280 },
+        { "src": "assets/focus/007.webp", "durationMs": 280 },
+        { "src": "assets/focus/008.webp", "durationMs": 280 },
+        { "src": "assets/focus/009.webp", "durationMs": 320 }
+      ]
+    },
+    {
+      "id": "daily-reset-stretch",
+      "label": "舒展恢复",
+      "loop": false,
+      "weight": 1,
+      "intents": ["tired", "idle"],
+      "frames": [
+        { "src": "assets/reset/000.webp", "durationMs": 280 },
+        { "src": "assets/reset/001.webp", "durationMs": 280 },
+        { "src": "assets/reset/002.webp", "durationMs": 300 },
+        { "src": "assets/reset/003.webp", "durationMs": 320 },
+        { "src": "assets/reset/004.webp", "durationMs": 650 },
+        { "src": "assets/reset/005.webp", "durationMs": 220 },
+        { "src": "assets/reset/006.webp", "durationMs": 260 },
+        { "src": "assets/reset/007.webp", "durationMs": 420 }
+      ]
+    }
+  ]
+}

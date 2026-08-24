@@ -9,11 +9,11 @@ describe("motion manifest", () => {
     name: "Daily Dance",
     targetPetId: "daily",
     canvas: { width: 192, height: 208, anchorX: 96, anchorY: 208 },
-    animations: [{ id: "dance", loop: true, weight: 1, intents: ["celebrate"], frames: [{ src: "assets/dance/000.webp", durationMs: 100 }] }]
+    animations: [{ id: "dance", label: "庆祝舞步", loop: true, weight: 1, intents: ["celebrate"], frames: [{ src: "assets/dance/000.webp", durationMs: 100 }] }]
   };
 
   it("accepts a constrained extension manifest", () => {
-    expect(parseMotionManifest(valid).packId).toBe("daily-dance");
+    expect(parseMotionManifest(valid).animations[0].label).toBe("庆祝舞步");
   });
 
   it("rejects traversal and executable assets", () => {

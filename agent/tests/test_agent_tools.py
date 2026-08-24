@@ -1,6 +1,6 @@
 import unittest
 
-from souldesk_agent.tools.companion import build_companion_tools
+from everby_agent.tools.companion import build_companion_tools
 
 
 class CompanionToolTests(unittest.TestCase):

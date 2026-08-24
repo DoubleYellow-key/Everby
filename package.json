@@ -1,9 +1,9 @@
 {
-  "name": "souldesk",
+  "name": "everby",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "author": "SoulDesk contributors",
+  "author": "Everby contributors",
   "type": "module",
   "description": "A private, local-first desktop companion powered by your own model API.",
   "main": "out/main/main.js",
@@ -25,11 +25,12 @@
     "dist:mac:x64": "node scripts/python-agent.mjs build x64 darwin && pnpm build && electron-builder --mac dmg zip --x64",
     "motion:build": "tsx scripts/build-motion.ts",
     "motion:validate": "tsx scripts/validate-motion.ts",
+    "motion:example": "tsx scripts/create-example-motion.ts && tsx scripts/build-motion.ts examples/motions/daily-routines/motion.json examples/motions/daily-routines.soulmotion",
     "assets:placeholder": "tsx scripts/create-placeholder.ts"
   },
   "build": {
-    "appId": "app.souldesk.companion",
-    "productName": "SoulDesk",
+    "appId": "app.everby.companion",
+    "productName": "Everby",
     "asar": true,
     "asarUnpack": [
       "node_modules/get-windows/**",

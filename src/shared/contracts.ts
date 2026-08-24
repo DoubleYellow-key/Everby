@@ -87,6 +87,51 @@ export interface AgentCapabilities {
 
 export type AgentStatus = "unconfigured" | "ready" | "degraded" | "busy" | "error";
 
+export type ActionRuleEvent = "pet_click" | "conversation_intent" | "reminder";
+export type PetActionSource = "routine" | "pet_click" | "conversation" | "reminder" | "preview" | "drag" | "system";
+export interface PetActionRequest {
+  actionId: string;
+  source: PetActionSource;
+  priority: number;
+  durationSeconds: number;
+  ruleId?: string;
+  triggeredAt?: number;
+}
+
+export type ActionRuleTrigger =
+  | {
+      type: "routine";
+      weekdays: number[];
+      startTime: string;
+      endTime: string;
+      minIntervalMinutes: number;
+      maxIntervalMinutes: number;
+      probability: number;
+    }
+  | {
+      type: "event";
+      event: ActionRuleEvent;
+      intent?: ActionIntent;
+      probability: number;
+      cooldownSeconds: number;
+    };
+
+export interface ActionRule {
+  id: string;
+  petId: string;
+  name: string;
+  actionId: string;
+  enabled: boolean;
+  durationSeconds: number;
+  trigger: ActionRuleTrigger;
+  createdAt: number;
+  updatedAt: number;
+  lastTriggeredAt: number | null;
+}
+
+export type CreateActionRuleInput = Pick<ActionRule, "name" | "actionId" | "enabled" | "durationSeconds" | "trigger">;
+export type UpdateActionRuleInput = Partial<CreateActionRuleInput>;
+
 export interface MemoryItem {
   id: string;
   type: "preference" | "identity" | "goal" | "project" | "habit" | "relationship" | "commitment";
@@ -131,7 +176,18 @@ export interface AppSettings extends PresenceSettings {
 }
 
 export interface PetFrame { x: number; y: number; width: number; height: number; durationMs: number; src?: string }
-export interface PetAnimation { id: string; loop: boolean; weight: number; intents: ActionIntent[]; frames: PetFrame[] }
+export interface PetAnimation {
+  id: string;
+  label?: string;
+  loop: boolean;
+  weight: number;
+  intents: ActionIntent[];
+  frames: PetFrame[];
+  source?: "base" | "extension";
+  packId?: string;
+  packName?: string;
+  enabled?: boolean;
+}
 export interface PetRuntime {
   id: string;
   name: string;
@@ -139,6 +195,7 @@ export interface PetRuntime {
   sheetUrl: string;
   canvas: { width: number; height: number; anchorX: number; anchorY: number };
   animations: PetAnimation[];
+  actionRules: ActionRule[];
   settings: AppSettings;
 }
 
@@ -150,7 +207,8 @@ export interface PetSummary {
   source: "petdex" | "bundled";
 }
 
-export interface MotionPackSummary { packId: string; version: string; name: string; enabled: boolean; animationCount: number }
+export interface MotionPackSummary { packId: string; version: string; name: string; targetPetId: string; enabled: boolean; animationCount: number }
+export interface MotionCatalog { petId: string; actions: PetAnimation[] }
 export interface AppSnapshot {
   activePetId: string;
   pets: PetSummary[];
@@ -161,6 +219,7 @@ export interface AppSnapshot {
   messages: ChatMessage[];
   memorySummary: string;
   motionPacks: MotionPackSummary[];
+  actionRules: ActionRule[];
   todos: TodoItem[];
   memories: MemoryItem[];
   agentCapabilities: AgentCapabilities;
@@ -171,7 +230,7 @@ export interface AppSnapshot {
 export interface ChatRequest { content: string }
 export interface ChatDelta { requestId: string; delta: string; done: boolean; error?: string }
 
-export interface SoulDeskApi {
+export interface EverbyApi {
   getSnapshot(): Promise<AppSnapshot>;
   getPetRuntime(): Promise<PetRuntime>;
   selectPet(petId: string): Promise<void>;
@@ -188,8 +247,14 @@ export interface SoulDeskApi {
   setPetInteractive(interactive: boolean): void;
   savePetPosition(x: number, y: number): Promise<void>;
   importMotion(): Promise<MotionPackSummary | null>;
+  getMotionCatalog(): Promise<MotionCatalog>;
   setMotionEnabled(packId: string, enabled: boolean): Promise<void>;
   removeMotion(packId: string): Promise<void>;
+  previewAction(actionId: string): Promise<void>;
+  createActionRule(input: CreateActionRuleInput): Promise<ActionRule>;
+  updateActionRule(id: string, patch: UpdateActionRuleInput): Promise<ActionRule>;
+  deleteActionRule(id: string): Promise<void>;
+  recordActionRuleTrigger(id: string, triggeredAt: number): Promise<void>;
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
   updateTodo(id: string, patch: UpdateTodoInput): Promise<TodoItem>;
   deleteTodo(id: string): Promise<void>;
@@ -198,6 +263,6 @@ export interface SoulDeskApi {
   onChatDelta(callback: (delta: ChatDelta) => void): () => void;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onRuntime(callback: (runtime: PetRuntime) => void): () => void;
-  onPetAction(callback: (animationId: string) => void): () => void;
+  onPetAction(callback: (request: PetActionRequest | string) => void): () => void;
   onPetSpeech(callback: (message: string) => void): () => void;
 }

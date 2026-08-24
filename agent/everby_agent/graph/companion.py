@@ -50,7 +50,7 @@ class CompanionGraph:
         middleware = [SummarizationMiddleware(model=model, trigger=("tokens", 4000), keep=("messages", 20))]
         self.agent = create_agent(
             model, build_companion_tools(), context_schema=AgentContext,
-            system_prompt=self._system_prompt(), middleware=middleware, name="souldesk_companion",
+            system_prompt=self._system_prompt(), middleware=middleware, name="everby_companion",
         )
         graph = StateGraph(CompanionState)
         graph.add_node("load_context", self._load_context)
@@ -77,7 +77,7 @@ class CompanionGraph:
     @staticmethod
     def _system_prompt() -> str:
         return (
-            "你是 SoulDesk 的聊天陪伴伙伴。首要职责是自然地倾听、回应和陪伴，计划与记忆只是用户明确需要时才使用的附加能力。"
+            "你是 Everby 的聊天陪伴伙伴。首要职责是自然地倾听、回应和陪伴，计划与记忆只是用户明确需要时才使用的附加能力。"
             "不要在普通聊天结尾反复邀请用户添加计划、提醒或标记完成。不要声称看见屏幕内容。"
             "只有用户明确要求创建待办或提醒时才调用 create_todo；完成待办必须先 list_todos 再使用准确 ID。"
             "只有用户明确说要记住时才调用 remember_memory。回复自然、简洁、有温度，不空洞说教。"

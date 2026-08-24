@@ -1,4 +1,4 @@
-import type { SoulDeskApi } from "../shared/contracts";
+import type { EverbyApi } from "../shared/contracts";
 
-declare global { interface Window { souldesk: SoulDeskApi } }
+declare global { interface Window { everby: EverbyApi } }
 export {};

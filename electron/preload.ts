@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, AppSnapshot, ChatDelta, EmbeddingSettings, ModelSettings, PersonaProfile, PetRuntime, SoulDeskApi } from "../src/shared/contracts";
+import type { AppSettings, AppSnapshot, ChatDelta, EmbeddingSettings, ModelSettings, PersonaProfile, PetActionRequest, PetRuntime, EverbyApi } from "../src/shared/contracts";
 
 const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) => {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
@@ -7,7 +7,7 @@ const subscribe = <T>(channel: string, callback: (value: T) => void): (() => voi
   return () => ipcRenderer.removeListener(channel, listener);
 };
 
-const api: SoulDeskApi = {
+const api: EverbyApi = {
   getSnapshot: () => ipcRenderer.invoke("app:snapshot"),
   getPetRuntime: () => ipcRenderer.invoke("pet:runtime"),
   selectPet: (petId: string) => ipcRenderer.invoke("pet:select", petId),
@@ -24,8 +24,14 @@ const api: SoulDeskApi = {
   setPetInteractive: (interactive: boolean) => ipcRenderer.send("pet:interactive", interactive),
   savePetPosition: (x: number, y: number) => ipcRenderer.invoke("pet:position", x, y),
   importMotion: () => ipcRenderer.invoke("motion:import"),
+  getMotionCatalog: () => ipcRenderer.invoke("motion:catalog"),
   setMotionEnabled: (packId: string, enabled: boolean) => ipcRenderer.invoke("motion:enabled", packId, enabled),
   removeMotion: (packId: string) => ipcRenderer.invoke("motion:remove", packId),
+  previewAction: (actionId: string) => ipcRenderer.invoke("motion:preview", actionId),
+  createActionRule: (input) => ipcRenderer.invoke("action-rule:create", input),
+  updateActionRule: (id, patch) => ipcRenderer.invoke("action-rule:update", id, patch),
+  deleteActionRule: (id) => ipcRenderer.invoke("action-rule:delete", id),
+  recordActionRuleTrigger: (id, triggeredAt) => ipcRenderer.invoke("action-rule:triggered", id, triggeredAt),
   createTodo: (input) => ipcRenderer.invoke("todo:create", input),
   updateTodo: (id, patch) => ipcRenderer.invoke("todo:update", id, patch),
   deleteTodo: (id) => ipcRenderer.invoke("todo:delete", id),
@@ -34,9 +40,9 @@ const api: SoulDeskApi = {
   onChatDelta: (callback: (value: ChatDelta) => void) => subscribe("chat:delta", callback),
   onSnapshot: (callback: (value: AppSnapshot) => void) => subscribe("app:snapshot-changed", callback),
   onRuntime: (callback: (value: PetRuntime) => void) => subscribe("pet:runtime-changed", callback),
-  onPetAction: (callback: (value: string) => void) => subscribe("pet:action", callback),
+  onPetAction: (callback: (value: PetActionRequest | string) => void) => subscribe("pet:action", callback),
   onPetSpeech: (callback: (value: string) => void) => subscribe("pet:speech", callback)
 };
 
-contextBridge.exposeInMainWorld("souldesk", api);
-export type { SoulDeskApi };
+contextBridge.exposeInMainWorld("everby", api);
+export type { EverbyApi };

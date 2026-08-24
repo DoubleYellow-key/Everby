@@ -80,7 +80,7 @@ export class MotionService {
         for (const frame of animation.frames) {
           const file = resolve(staging, frame.src);
           if (!file.startsWith(`${resolve(staging)}${sep}`)) throw new Error("动作资源路径越界");
-          const metadata = await sharp(file).metadata();
+          const metadata = await sharp(await readFile(file)).metadata();
           if (metadata.width !== 192 || metadata.height !== 208 || !metadata.hasAlpha) throw new Error("动作帧必须是 192x208 透明图像");
         }
       }
@@ -92,20 +92,29 @@ export class MotionService {
       catch (error) { try { await rename(backup, destination); } catch { /* No previous version. */ } throw error; }
       return { manifest, path: destination };
     } catch (error) {
-      await rm(staging, { recursive: true, force: true });
+      await rm(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
       throw error;
     }
   }
 
-  async loadAnimations(packPath: string, packId: string, targetPetId: string): Promise<PetAnimation[]> {
-    const manifest = parseMotionManifest(JSON.parse(await readFile(join(packPath, "motion.json"), "utf8")));
+  async readManifest(packPath: string): Promise<MotionManifest> {
+    return parseMotionManifest(JSON.parse(await readFile(join(packPath, "motion.json"), "utf8")));
+  }
+
+  async loadAnimations(packPath: string, packId: string, targetPetId: string, packName = packId, enabled = true): Promise<PetAnimation[]> {
+    const manifest = await this.readManifest(packPath);
     if (manifest.targetPetId !== targetPetId) return [];
     return manifest.animations.map((animation) => ({
       id: animation.id,
+      label: animation.label,
       loop: animation.loop,
       weight: animation.weight,
       intents: animation.intents,
-      frames: animation.frames.map((frame) => ({ x: 0, y: 0, width: 192, height: 208, durationMs: frame.durationMs, src: `souldesk://motion/${packId}/${frame.src}` }))
+      source: "extension",
+      packId,
+      packName,
+      enabled,
+      frames: animation.frames.map((frame) => ({ x: 0, y: 0, width: 192, height: 208, durationMs: frame.durationMs, src: `everby://motion/${packId}/${frame.src}` }))
     }));
   }
 }

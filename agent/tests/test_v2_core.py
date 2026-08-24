@@ -4,9 +4,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from souldesk_agent.memory.filters import is_safe_memory
-from souldesk_agent.persistence.database import AgentRepository
-from souldesk_agent.schemas.protocol import RpcRequest
+from everby_agent.memory.filters import is_safe_memory
+from everby_agent.persistence.database import AgentRepository
+from everby_agent.schemas.protocol import RpcRequest
+from everby_agent.workflows.scheduler import AgentScheduler
 
 
 class ProtocolV2Tests(unittest.TestCase):
@@ -49,10 +50,10 @@ class AgentRepositoryTests(unittest.TestCase):
 
     def test_hybrid_memory_search_uses_fts_and_vector_results(self):
         self.repo.remember("daily", "preference", "The user likes jasmine tea", vector=[1.0, 0.0], confidence=0.9)
-        self.repo.remember("daily", "project", "SoulDesk uses a Python agent", vector=[0.0, 1.0], confidence=0.8)
+        self.repo.remember("daily", "project", "Everby uses a Python agent", vector=[0.0, 1.0], confidence=0.8)
         results = self.repo.search_memories("daily", "jasmine", query_vector=[0.0, 1.0], limit=2)
         self.assertEqual({item["content"] for item in results}, {
-            "The user likes jasmine tea", "SoulDesk uses a Python agent"
+            "The user likes jasmine tea", "Everby uses a Python agent"
         })
 
     def test_similar_memory_merges_instead_of_duplicating(self):
@@ -67,6 +68,24 @@ class MemoryFilterTests(unittest.TestCase):
         self.assertFalse(is_safe_memory("My API key is sk-test-secret"))
         self.assertFalse(is_safe_memory("今天天气哈哈"))
         self.assertTrue(is_safe_memory("用户明确希望以后称呼她为小林"))
+
+
+class SchedulerTests(unittest.TestCase):
+    def test_reminder_emits_one_notification_without_a_duplicate_pet_action(self):
+        path = Path(__file__).parent / f".scheduler-{uuid.uuid4()}.db"
+        repo = AgentRepository(path)
+        events = []
+        try:
+            repo.create_todo("daily", "Stand up", remind_at=1)
+            scheduler = AgentScheduler(repo, lambda event, data, request_id: events.append(event))
+            scheduler.run_once()
+            self.assertEqual(events, ["notification_requested", "state_changed"])
+        finally:
+            repo.close()
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(str(path) + suffix)
+                if candidate.exists():
+                    candidate.unlink()
 
 
 if __name__ == "__main__":

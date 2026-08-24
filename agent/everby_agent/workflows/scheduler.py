@@ -25,17 +25,19 @@ class AgentScheduler:
     async def _run(self) -> None:
         while True:
             await asyncio.sleep(5)
-            if not self.settings.get("remindersEnabled", True) or self.idle_state == "locked":
-                continue
-            due = self.repository.claim_due_reminders(self.pet_id)
-            if not due:
-                continue
-            names = [item["title"] for item in due[:3]]
-            message = f"提醒时间到了：{'、'.join(names)}" + (f"等 {len(due)} 项" if len(due) > 3 else "")
-            self.repository.add_message(self.pet_id, "assistant", message)
-            self.emit("notification_requested", {"title": "SoulDesk 提醒", "message": message}, None)
-            self.emit("pet_action", {"actionIntent": "encourage"}, None)
-            self.emit("state_changed", {"reason": "reminder"}, None)
+            self.run_once()
+
+    def run_once(self) -> None:
+        if not self.settings.get("remindersEnabled", True) or self.idle_state == "locked":
+            return
+        due = self.repository.claim_due_reminders(self.pet_id)
+        if not due:
+            return
+        names = [item["title"] for item in due[:3]]
+        message = f"提醒时间到了：{'、'.join(names)}" + (f"等 {len(due)} 项" if len(due) > 3 else "")
+        self.repository.add_message(self.pet_id, "assistant", message)
+        self.emit("notification_requested", {"title": "Everby 提醒", "message": message}, None)
+        self.emit("state_changed", {"reason": "reminder"}, None)
 
     async def close(self) -> None:
         if self._task:

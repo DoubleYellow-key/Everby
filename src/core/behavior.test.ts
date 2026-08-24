@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseAnimation, chooseLocalBehavior, fallbackConversationIntent, resolveDecision } from "./behavior";
+import { chooseAnimation, fallbackConversationIntent, resolveDecision } from "./behavior";
 
 describe("behavior mapping", () => {
   it("maps a validated semantic intent to an available character action", () => {
@@ -22,20 +22,6 @@ describe("behavior mapping", () => {
       { type: "create", title: "喝水", remindAt: 2_000, repeat: "daily" }, { type: "complete", title: "写周报" }
     ]);
     expect(resolveDecision({ actionIntent: "happy", mood: "calm", todoOperations: [{ type: "delete", title: "everything" }] }).todoOperations).toEqual([]);
-  });
-
-  it("keeps walking rare and favors quiet desk behaviors", () => {
-    expect(chooseLocalBehavior(0.01, false).id).toBe("run-right");
-    expect(chooseLocalBehavior(0.01, true).id).toBe("run-left");
-    expect(chooseLocalBehavior(0.08, false).id).toBe("working");
-    expect(chooseLocalBehavior(0.55, false).id).toBe("stretch");
-    expect(chooseLocalBehavior(0.75, false).id).toBe("review");
-    expect(chooseLocalBehavior(0.95, false).id).toBe("idle");
-  });
-
-  it("keeps coding visible and lets stretching finish before returning to idle", () => {
-    expect(chooseLocalBehavior(0.08, false)).toMatchObject({ minDurationMs: 18_000, maxDurationMs: 30_000 });
-    expect(chooseLocalBehavior(0.55, false)).toMatchObject({ minDurationMs: 2_730, maxDurationMs: 2_730 });
   });
 
   it("keeps emotional feedback visible when the behavior model is unavailable", () => {

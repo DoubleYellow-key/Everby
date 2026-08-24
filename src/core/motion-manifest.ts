@@ -24,6 +24,7 @@ const motionManifestSchema = z.object({
   }),
   animations: z.array(z.object({
     id: safeId,
+    label: z.string().trim().min(1).max(80).optional(),
     loop: z.boolean(),
     weight: z.number().positive().max(100).default(1),
     intents: z.array(z.enum(ACTION_INTENTS)).min(1),

@@ -14,5 +14,5 @@ for package in ("langchain", "langchain_core", "langchain_openai", "langgraph", 
 analysis = Analysis([str(root / "main.py")], pathex=[str(root)], binaries=binaries, datas=datas,
                     hiddenimports=hiddenimports, hookspath=[], runtime_hooks=[], excludes=[], noarchive=False)
 pyz = PYZ(analysis.pure)
-exe = EXE(pyz, analysis.scripts, analysis.binaries, analysis.datas, [], name="souldesk-agent",
+exe = EXE(pyz, analysis.scripts, analysis.binaries, analysis.datas, [], name="everby-agent",
           debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=True)

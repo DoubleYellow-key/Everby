@@ -1,4 +1,4 @@
-from souldesk_agent.server import run
+from everby_agent.server import run
 
 
 if __name__ == "__main__":

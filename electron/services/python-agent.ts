@@ -28,8 +28,8 @@ export class PythonAgentClient {
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.child && !this.child.killed) return this.child;
     const executable = this.options.packaged
-      ? join(this.options.resourcesPath, "agent", process.platform === "win32" ? "souldesk-agent.exe" : "souldesk-agent")
-      : this.options.pythonExecutable || process.env.SOULDESK_PYTHON || (process.platform === "win32" ? "python" : "python3");
+      ? join(this.options.resourcesPath, "agent", process.platform === "win32" ? "everby-agent.exe" : "everby-agent")
+      : this.options.pythonExecutable || process.env.EVERBY_PYTHON || process.env.SOULDESK_PYTHON || (process.platform === "win32" ? "python" : "python3");
     const args = this.options.packaged ? [] : [join(this.options.appPath, "agent/main.py")];
     const child = spawn(executable, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: {
       ...process.env, PYTHONUNBUFFERED: "1", PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8",

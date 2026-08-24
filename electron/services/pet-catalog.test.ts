@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { discoverPets } from "./pet-catalog";
 
 const roots: string[] = [];
-function root(): string { const value = mkdtempSync(join(tmpdir(), "souldesk-pets-")); roots.push(value); return value; }
+function root(): string { const value = mkdtempSync(join(tmpdir(), "everby-pets-")); roots.push(value); return value; }
 async function pet(base: string, id: string, name: string, extension = "webp"): Promise<void> {
   const directory = join(base, id); await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "pet.json"), JSON.stringify({ displayName: name, description: `${name} description` }));

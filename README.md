@@ -1,6 +1,6 @@
-# SoulDesk
+# Everby（常伴）
 
-SoulDesk 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使用 Electron 提供透明桌宠窗口和管理界面，以 Python sidecar 负责对话、工具、记忆与后台工作流，并将受控语义意图映射为本地逐帧动画。
+Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使用 Electron 提供透明桌宠窗口和管理界面，以 Python sidecar 负责对话、工具、记忆与后台工作流，并将受控语义意图映射为本地逐帧动画。
 
 当前版本内置原创角色 **Daily**，也能发现用户自行安装的 Petdex 角色。模型离线时，角色仍可走动、待机、响应点击和播放本地动作。
 
@@ -16,7 +16,7 @@ SoulDesk 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它�
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
 - SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
-- `.soulmotion` 动作扩展包的验证、安装、启停和卸载
+- 可视化动作库、按角色触发规则，以及 `.soulmotion` 扩展包的验证、安装、启停和卸载
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
 
 ## 快速开始
@@ -30,7 +30,11 @@ pnpm agent:test
 pnpm dev
 ```
 
-首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。SoulDesk 只读扫描 `~/.petdex/pets`，不会修改外部角色的安装目录或原始资源。
+首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。Everby 只读扫描 `~/.petdex/pets`，不会修改外部角色的安装目录或原始资源。
+
+### 从 SoulDesk 升级
+
+Everby 是 SoulDesk 的新名称。首次启动 Everby 时，应用会将旧 `SoulDesk` 用户目录中的数据库、加密凭据和动作扩展复制到新的 Everby 数据目录，并将 `souldesk.db` 升级为 `everby.db`；已有数据不会被覆盖。新的资源协议与环境变量分别使用 `everby://` 和 `EVERBY_*`，旧 `souldesk://` 与 `SOULDESK_*` 入口暂时保留兼容。已有 `.soulmotion` 动作扩展无需重新打包。
 
 ## 配置模型
 
@@ -47,7 +51,7 @@ pnpm dev
 ```bash
 ollama pull llama3.2:latest
 ollama serve
-SOULDESK_MODEL=llama3.2:latest pnpm agent:smoke
+EVERBY_MODEL=llama3.2:latest pnpm agent:smoke
 ```
 
 API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返回给渲染进程，也不应写入 `.env` 或提交到仓库。
@@ -90,7 +94,7 @@ pnpm agent:test      # Python 智能体测试
 pnpm build           # Electron 渲染与主进程构建
 ```
 
-开发态由 Electron 启动 `python3 agent/main.py`。可使用 `SOULDESK_PYTHON` 指定 Python 解释器。
+开发态由 Electron 启动 `python3 agent/main.py`。可使用 `EVERBY_PYTHON` 指定 Python 解释器。
 
 动作扩展格式和安全约束见 [docs/soulmotion-format.md](docs/soulmotion-format.md)：
 
@@ -99,7 +103,7 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型和提醒系统只选择语义意图，具体动画由当前角色已启用的基础动作与扩展动作映射器决定。
+后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，具体动画由当前角色的本地规则与动作映射器决定；日常规则支持星期、时间窗口、随机间隔和概率，事件规则支持点击、对话语义与提醒。仓库附带可直接导入的 `examples/motions/daily-routines.soulmotion` 示例包。
 
 ## 打包
 
@@ -122,14 +126,14 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Win
 
 ## 角色资源
 
-Daily 是 SoulDesk 的原创内置角色，其运行图集与 QA 资料保存在本仓库。完整九组动作可在 [Daily 动作检查图](resources/pet-qa/daily/contact-sheet.png) 中查看。
+Daily 是 Everby 的原创内置角色，其运行图集与 QA 资料保存在本仓库。完整九组动作可在 [Daily 动作检查图](resources/pet-qa/daily/contact-sheet.png) 中查看。
 
-外部角色资源不包含在 SoulDesk 的授权范围内，也不会被复制进源码仓库。贡献或发布其他角色前，请先确认对应素材的授权范围。
+外部角色资源不包含在 Everby 的授权范围内，也不会被复制进源码仓库。贡献或发布其他角色前，请先确认对应素材的授权范围。
 
 ## 当前状态
 
-SoulDesk 仍处于第一版开发阶段。建议在公开发布前补充代码签名和安装包公证，并通过 GitHub Release 分发构建产物，不要把 `release/` 直接提交到源码仓库。
+Everby 仍处于第一版开发阶段。建议在公开发布前补充代码签名和安装包公证，并通过 GitHub Release 分发构建产物，不要把 `release/` 直接提交到源码仓库。
 
 ## 许可证
 
-SoulDesk 源码与仓库内的原创 Daily 资源采用 [MIT License](LICENSE)。通过 Petdex 单独安装的角色及其他明确标注的第三方资源不包含在该授权范围内，请遵循各自的许可条款。
+Everby 源码与仓库内的原创 Daily 资源采用 [MIT License](LICENSE)。通过 Petdex 单独安装的角色及其他明确标注的第三方资源不包含在该授权范围内，请遵循各自的许可条款。

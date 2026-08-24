@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import process from "node:process";
 
 const [mode, expectedArch, expectedPlatform] = process.argv.slice(2);
-const python = process.env.SOULDESK_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const python = process.env.EVERBY_PYTHON || process.env.SOULDESK_PYTHON || (process.platform === "win32" ? "python" : "python3");
 
 if (expectedArch && process.arch !== expectedArch) {
   console.error(`Python sidecar 不能跨架构构建：当前 ${process.arch}，目标 ${expectedArch}`);
@@ -27,7 +27,7 @@ if (mode === "schema") {
 } else if (mode === "build") {
   rmSync("agent-dist", { recursive: true, force: true });
   rmSync(".agent-build", { recursive: true, force: true });
-  args = ["-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", "agent-dist", "--workpath", ".agent-build/work", "agent/souldesk-agent.spec"];
+  args = ["-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", "agent-dist", "--workpath", ".agent-build/work", "agent/everby-agent.spec"];
 } else {
   console.error("用法：node scripts/python-agent.mjs schema|test|build [arch] [platform]");
   process.exit(1);
