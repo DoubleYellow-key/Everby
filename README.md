@@ -16,7 +16,8 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
 - SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
-- 可视化动作库、按角色触发规则，以及 `.soulmotion` 扩展包的验证、安装、启停和卸载
+- 可视化动作库、常态/专注/休息状态模式、按角色事件规则，以及 `.soulmotion` 扩展包管理
+- 动作导演通过时间预算控制非待机占比；专注模式以三分钟坐姿工作长段为主，Daily 示例扩展、三组状态配置与六条事件规则会在首次启动时初始化
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
 
 ## 快速开始
@@ -72,7 +73,7 @@ flowchart LR
     MAIN --> AGENT["Python sidecar"]
     AGENT --> DB["SQLite / checkpoint / FTS / vectors"]
     AGENT --> MODEL["OpenAI 兼容 API / Ollama"]
-    MAIN --> MOTION["本地动作状态机"]
+    MAIN --> MOTION["本地 ActionDirector"]
     MOTION --> UI
 ```
 
@@ -103,7 +104,7 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，具体动画由当前角色的本地规则与动作映射器决定；日常规则支持星期、时间窗口、随机间隔和概率，事件规则支持点击、对话语义与提醒。仓库附带可直接导入的 `examples/motions/daily-routines.soulmotion` 示例包。
+后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理常态、专注、休息三种状态的时间预算、动作权重、事件优先级和回退。事件规则支持点击、对话语义与提醒；专注和休息可从陪伴页或托盘启动计时。仓库附带的 `examples/motions/daily-routines.soulmotion` 会为 Daily 首次自动安装，也可以通过设置页手动导入其他扩展。
 
 ## 打包
 

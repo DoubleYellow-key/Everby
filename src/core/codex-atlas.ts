@@ -1,4 +1,5 @@
 import type { ActionIntent, AppSettings, PetAnimation, PetRuntime } from "../shared/contracts";
+import { defaultActionProfiles } from "./action-profiles";
 
 const FRAME_COUNTS = [6, 8, 8, 4, 5, 8, 6, 6, 6] as const;
 interface AtlasAction {
@@ -38,7 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   quietHoursEnd: "08:00"
 };
 
-export function createCodexRuntime(input: { id: string; name: string; description: string; sheetUrl: string; settings?: AppSettings; actionRules?: PetRuntime["actionRules"] }): PetRuntime {
+export function createCodexRuntime(input: { id: string; name: string; description: string; sheetUrl: string; settings?: AppSettings; actionRules?: PetRuntime["actionRules"]; actionProfiles?: PetRuntime["actionProfiles"]; actionMode?: PetRuntime["actionMode"] }): PetRuntime {
   const animations: PetAnimation[] = ACTIONS.map((action, row) => ({
     id: action.id,
     label: action.label,
@@ -61,6 +62,8 @@ export function createCodexRuntime(input: { id: string; name: string; descriptio
     canvas: { width: 192, height: 208, anchorX: 96, anchorY: 208 },
     animations,
     actionRules: input.actionRules ?? [],
+    actionProfiles: input.actionProfiles ?? defaultActionProfiles(input.id),
+    actionMode: input.actionMode ?? { petId: input.id, mode: "normal", source: "system", startedAt: Date.now(), endsAt: null },
     settings: input.settings ?? DEFAULT_SETTINGS
   };
 }

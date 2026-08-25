@@ -40,11 +40,13 @@
     "files": ["out/**", "package.json"],
     "extraResources": [
       { "from": "resources/runtime-pets", "to": "pets" },
-      { "from": "agent-dist", "to": "agent" }
+      { "from": "agent-dist", "to": "agent" },
+      { "from": "examples/motions/daily-routines.soulmotion", "to": "motion-examples/daily-routines.soulmotion" },
+      { "from": "build/icon.png", "to": "app-icon.png" }
     ],
-    "directories": { "output": "release" },
-    "win": { "target": ["nsis", "portable"] },
-    "mac": { "category": "public.app-category.lifestyle", "target": ["dmg", "zip"] },
+    "directories": { "buildResources": "build", "output": "release" },
+    "win": { "icon": "icon.png", "target": ["nsis", "portable"] },
+    "mac": { "icon": "icon.png", "category": "public.app-category.lifestyle", "target": ["dmg", "zip"] },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   },
   "dependencies": {

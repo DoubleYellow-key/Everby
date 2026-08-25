@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_SETTINGS } from "../../src/core/codex-atlas";
-import type { ActionRule, AppSettings, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionRuleInput } from "../../src/shared/contracts";
+import type { ActionMode, ActionModeSession, ActionProfile, ActionRule, AppSettings, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionRuleInput } from "../../src/shared/contracts";
 
 export const DEFAULT_MODEL: ModelSettings = { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", temperature: 0.7, configured: false };
 export const DEFAULT_EMBEDDING: EmbeddingSettings = { baseUrl: "https://api.openai.com/v1", model: "text-embedding-3-small", configured: false };
@@ -35,6 +35,17 @@ export class AppDatabase {
         last_triggered_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS action_rules_pet_id ON action_rules(pet_id, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS action_rules_v2_archive (
+        archive_id TEXT PRIMARY KEY, pet_id TEXT NOT NULL, rule_json TEXT NOT NULL, archived_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS action_profiles (
+        pet_id TEXT NOT NULL, mode TEXT NOT NULL, activity_ratio REAL NOT NULL, strategy TEXT NOT NULL,
+        items_json TEXT NOT NULL, fallback_action_id TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY(pet_id, mode)
+      );
+      CREATE TABLE IF NOT EXISTS action_mode_sessions (
+        pet_id TEXT PRIMARY KEY, mode TEXT NOT NULL, source TEXT NOT NULL, started_at INTEGER NOT NULL, ends_at INTEGER
+      );
     `);
   }
 
@@ -72,6 +83,9 @@ export class AppDatabase {
 
   getActivePetId(): string { return this.getJson("activePet", { id: "daily" }).id; }
   setActivePetId(petId: string): void { this.setJson("activePet", { id: petId }); }
+
+  getInitializationVersion(name: string): number { return this.getJson(`initialization:${name}`, { version: 0 }).version; }
+  setInitializationVersion(name: string, version: number): void { this.setJson(`initialization:${name}`, { version }); }
 
   listMotionPacks(targetPetId?: string): MotionPackSummary[] {
     const rows = targetPetId
@@ -119,6 +133,73 @@ export class AppDatabase {
 
   recordActionRuleTrigger(petId: string, id: string, triggeredAt: number): void {
     this.db.prepare("UPDATE action_rules SET last_triggered_at = ? WHERE id = ? AND pet_id = ?").run(triggeredAt, id, petId);
+  }
+
+  listActionProfiles(petId: string): ActionProfile[] {
+    return this.db.prepare("SELECT pet_id AS petId, mode, activity_ratio AS activityRatio, strategy, items_json AS itemsJson, fallback_action_id AS fallbackActionId, updated_at AS updatedAt FROM action_profiles WHERE pet_id = ? ORDER BY CASE mode WHEN 'normal' THEN 0 WHEN 'focus' THEN 1 ELSE 2 END")
+      .all(petId).map((row: any) => {
+        const { itemsJson, ...fields } = row;
+        return { ...fields, items: JSON.parse(itemsJson) } as ActionProfile;
+      });
+  }
+
+  saveActionProfile(profile: ActionProfile): ActionProfile {
+    this.db.prepare("INSERT INTO action_profiles(pet_id,mode,activity_ratio,strategy,items_json,fallback_action_id,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(pet_id,mode) DO UPDATE SET activity_ratio=excluded.activity_ratio,strategy=excluded.strategy,items_json=excluded.items_json,fallback_action_id=excluded.fallback_action_id,updated_at=excluded.updated_at")
+      .run(profile.petId, profile.mode, profile.activityRatio, profile.strategy, JSON.stringify(profile.items), profile.fallbackActionId, profile.updatedAt);
+    return this.listActionProfiles(profile.petId).find((item) => item.mode === profile.mode)!;
+  }
+
+  getActionMode(petId: string, now = Date.now()): ActionModeSession {
+    const row = this.db.prepare("SELECT pet_id AS petId, mode, source, started_at AS startedAt, ends_at AS endsAt FROM action_mode_sessions WHERE pet_id = ?").get(petId) as ActionModeSession | undefined;
+    if (!row || (row.endsAt !== null && row.endsAt <= now)) {
+      if (row) this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ?").run(petId);
+      return { petId, mode: "normal", source: "system", startedAt: now, endsAt: null };
+    }
+    return row;
+  }
+
+  startActionMode(petId: string, mode: Exclude<ActionMode, "normal">, durationMinutes: number, source: "manual" | "conversation", now = Date.now()): ActionModeSession {
+    const session: ActionModeSession = { petId, mode, source, startedAt: now, endsAt: now + durationMinutes * 60_000 };
+    this.db.prepare("INSERT INTO action_mode_sessions(pet_id,mode,source,started_at,ends_at) VALUES(?,?,?,?,?) ON CONFLICT(pet_id) DO UPDATE SET mode=excluded.mode,source=excluded.source,started_at=excluded.started_at,ends_at=excluded.ends_at")
+      .run(petId, mode, source, now, session.endsAt);
+    return session;
+  }
+
+  stopActionMode(petId: string, now = Date.now()): ActionModeSession {
+    this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ?").run(petId);
+    return { petId, mode: "normal", source: "system", startedAt: now, endsAt: null };
+  }
+
+  migrateActionSystemV3(petId: string, rules: CreateActionRuleInput[], profiles: ActionProfile[], now = Date.now()): boolean {
+    if (this.getInitializationVersion(`action-system:${petId}`) >= 3) {
+      if (this.getInitializationVersion(`focus-seated:${petId}`) < 1) {
+        const focus = this.listActionProfiles(petId).find((profile) => profile.mode === "focus");
+        if (focus?.activityRatio === 0.7 && focus.items[0]?.actionId === "daily-focus-cycle") this.saveActionProfile({ ...focus, activityRatio: 0.9, updatedAt: now });
+        this.setInitializationVersion(`focus-seated:${petId}`, 1);
+      }
+      return false;
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const rule of this.listActionRules(petId)) {
+        this.db.prepare("INSERT OR IGNORE INTO action_rules_v2_archive(archive_id,pet_id,rule_json,archived_at) VALUES(?,?,?,?)")
+          .run(`${petId}:${rule.id}`, petId, JSON.stringify(rule), now);
+      }
+      this.db.prepare("DELETE FROM action_rules WHERE pet_id = ?").run(petId);
+      for (const rule of rules) this.createActionRule(petId, rule, now);
+      for (const profile of profiles) this.saveActionProfile({ ...profile, petId, updatedAt: now });
+      this.setJson(`initialization:action-system:${petId}`, { version: 3 });
+      this.setInitializationVersion(`focus-seated:${petId}`, 1);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  archivedActionRuleCount(petId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM action_rules_v2_archive WHERE pet_id = ?").get(petId) as { count: number }).count);
   }
 
 }

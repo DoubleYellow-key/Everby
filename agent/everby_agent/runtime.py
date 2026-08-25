@@ -12,7 +12,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .graph.companion import CompanionGraph
 from .persistence.database import AgentRepository
-from .workflows import AgentScheduler, MemoryCurator
+from .workflows import AgentScheduler, MemoryCurator, compose_reminder_copy
 
 os.environ.setdefault("LANGSMITH_TRACING", "false")
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
@@ -94,7 +94,7 @@ class AgentRuntime:
         self.capabilities = {"streaming": bool(self.chat_model), "toolCalling": False, "embedding": bool(self.embeddings)}
         self.status = "ready" if self.chat_model else "unconfigured"
         if self.scheduler is None:
-            self.scheduler = AgentScheduler(self.require_repository(), self.emit)
+            self.scheduler = AgentScheduler(self.require_repository(), self.emit, self._compose_reminder)
             self.scheduler.start()
         if self.chat_model:
             if self.curator:
@@ -127,6 +127,16 @@ class AgentRuntime:
         if not self.repository:
             raise RuntimeError("runtime.configure must be called first")
         return self.repository
+
+    async def _compose_reminder(self, pet_id: str, todos: list[dict[str, Any]]) -> str | None:
+        if not self.chat_model or self.tasks:
+            return None
+        persona = self.require_repository().get_persona(
+            pet_id,
+            self.active_pet_name if pet_id == self.active_pet_id else pet_id,
+            self.active_pet_description if pet_id == self.active_pet_id else "",
+        )
+        return await compose_reminder_copy(self.chat_model, persona, todos)
 
     async def probe(self) -> dict[str, Any]:
         if not self.chat_model:

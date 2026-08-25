@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, AppSnapshot, ChatDelta, EmbeddingSettings, ModelSettings, PersonaProfile, PetActionRequest, PetRuntime, EverbyApi } from "../src/shared/contracts";
+import type { AppSettings, AppSnapshot, ChatDelta, EmbeddingSettings, ModelSettings, PersonaProfile, PetActionInput, PetPresence, PetRuntime, EverbyApi } from "../src/shared/contracts";
 
 const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) => {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
@@ -32,6 +32,9 @@ const api: EverbyApi = {
   updateActionRule: (id, patch) => ipcRenderer.invoke("action-rule:update", id, patch),
   deleteActionRule: (id) => ipcRenderer.invoke("action-rule:delete", id),
   recordActionRuleTrigger: (id, triggeredAt) => ipcRenderer.invoke("action-rule:triggered", id, triggeredAt),
+  updateActionProfile: (mode, patch) => ipcRenderer.invoke("action-profile:update", mode, patch),
+  startActionMode: (mode, durationMinutes) => ipcRenderer.invoke("action-mode:start", { mode, durationMinutes }),
+  stopActionMode: () => ipcRenderer.invoke("action-mode:stop"),
   createTodo: (input) => ipcRenderer.invoke("todo:create", input),
   updateTodo: (id, patch) => ipcRenderer.invoke("todo:update", id, patch),
   deleteTodo: (id) => ipcRenderer.invoke("todo:delete", id),
@@ -40,7 +43,8 @@ const api: EverbyApi = {
   onChatDelta: (callback: (value: ChatDelta) => void) => subscribe("chat:delta", callback),
   onSnapshot: (callback: (value: AppSnapshot) => void) => subscribe("app:snapshot-changed", callback),
   onRuntime: (callback: (value: PetRuntime) => void) => subscribe("pet:runtime-changed", callback),
-  onPetAction: (callback: (value: PetActionRequest | string) => void) => subscribe("pet:action", callback),
+  onPetAction: (callback: (value: PetActionInput) => void) => subscribe("pet:action", callback),
+  onPetPresence: (callback: (value: PetPresence) => void) => subscribe("pet:presence", callback),
   onPetSpeech: (callback: (value: string) => void) => subscribe("pet:speech", callback)
 };
 

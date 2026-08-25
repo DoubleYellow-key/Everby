@@ -1,12 +1,14 @@
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from pydantic import ValidationError
 
 from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository
 from everby_agent.schemas.protocol import RpcRequest
+from everby_agent.workflows.reminder_copy import compose_reminder_copy
 from everby_agent.workflows.scheduler import AgentScheduler
 
 
@@ -48,6 +50,12 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual(first["id"], duplicate["id"])
         self.assertEqual(len(self.repo.list_todos("daily")), 1)
 
+    def test_duplicate_todo_fills_in_missing_schedule(self):
+        first = self.repo.create_todo("daily", "完成小程序新需求")
+        enriched = self.repo.create_todo("daily", "完成小程序新需求", due_at=1_800_000_000_000)
+        self.assertEqual(first["id"], enriched["id"])
+        self.assertEqual(enriched["dueAt"], 1_800_000_000_000)
+
     def test_hybrid_memory_search_uses_fts_and_vector_results(self):
         self.repo.remember("daily", "preference", "The user likes jasmine tea", vector=[1.0, 0.0], confidence=0.9)
         self.repo.remember("daily", "project", "Everby uses a Python agent", vector=[0.0, 1.0], confidence=0.8)
@@ -70,22 +78,74 @@ class MemoryFilterTests(unittest.TestCase):
         self.assertTrue(is_safe_memory("用户明确希望以后称呼她为小林"))
 
 
-class SchedulerTests(unittest.TestCase):
-    def test_reminder_emits_one_notification_without_a_duplicate_pet_action(self):
+class SchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reminder_uses_composed_copy_without_a_duplicate_pet_action(self):
         path = Path(__file__).parent / f".scheduler-{uuid.uuid4()}.db"
         repo = AgentRepository(path)
-        events = []
+        events: list[tuple[str, dict]] = []
+
+        async def compose(_pet_id: str, todos: list[dict]) -> str:
+            self.assertEqual([item["title"] for item in todos], ["Stand up"])
+            return "该起身活动一下啦，回来再继续。"
+
         try:
             repo.create_todo("daily", "Stand up", remind_at=1)
-            scheduler = AgentScheduler(repo, lambda event, data, request_id: events.append(event))
-            scheduler.run_once()
-            self.assertEqual(events, ["notification_requested", "state_changed"])
+            scheduler = AgentScheduler(repo, lambda event, data, request_id: events.append((event, data)), compose)
+            await scheduler.run_once()
+            self.assertEqual([event for event, _data in events], ["notification_requested", "state_changed"])
+            self.assertEqual(events[0][1]["message"], "该起身活动一下啦，回来再继续。")
+            self.assertTrue(events[0][1]["generatedByModel"])
+            self.assertEqual(repo.list_messages("daily")[-1]["content"], "该起身活动一下啦，回来再继续。")
         finally:
             repo.close()
             for suffix in ("", "-wal", "-shm"):
                 candidate = Path(str(path) + suffix)
                 if candidate.exists():
                     candidate.unlink()
+
+    async def test_reminder_falls_back_when_composer_fails(self):
+        path = Path(__file__).parent / f".scheduler-fallback-{uuid.uuid4()}.db"
+        repo = AgentRepository(path)
+        events: list[tuple[str, dict]] = []
+
+        async def compose(_pet_id: str, _todos: list[dict]) -> str:
+            raise RuntimeError("model unavailable")
+
+        try:
+            repo.create_todo("daily", "吃午饭", remind_at=1)
+            scheduler = AgentScheduler(repo, lambda event, data, request_id: events.append((event, data)), compose)
+            await scheduler.run_once()
+            self.assertEqual(events[0][1]["message"], "提醒时间到了：吃午饭")
+            self.assertFalse(events[0][1]["generatedByModel"])
+        finally:
+            repo.close()
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(str(path) + suffix)
+                if candidate.exists():
+                    candidate.unlink()
+
+
+class ReminderCopyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_calls_model_with_persona_and_due_items(self):
+        class FakeModel:
+            def __init__(self):
+                self.messages = []
+
+            async def ainvoke(self, messages):
+                self.messages = messages
+                return SimpleNamespace(content="小林，午饭时间到啦。\n先好好吃饭，工作回来再继续。")
+
+        model = FakeModel()
+        result = await compose_reminder_copy(
+            model,
+            {"name": "Daily", "speakingStyle": "像熟悉的朋友", "userAddress": "小林"},
+            [{"title": "吃午饭", "notes": "别太晚"}],
+        )
+
+        self.assertEqual(result, "小林，午饭时间到啦。 先好好吃饭，工作回来再继续。")
+        prompt = "\n".join(str(message.content) for message in model.messages)
+        self.assertIn("像熟悉的朋友", prompt)
+        self.assertIn("吃午饭", prompt)
 
 
 if __name__ == "__main__":

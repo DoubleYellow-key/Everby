@@ -61,6 +61,37 @@ describe("PythonAgentClient protocol v2", () => {
     }
   }, 30_000);
 
+  it("executes text-encoded create_todo calls from compatible models", async () => {
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        const content = '<|FunctionCallBegin|>[{"name":"create_todo","parameters":{"content":"这周完成小程序后端迁移至云环境"}}]<|FunctionCallEnd|> '
+          + '<|FunctionCallBegin|>[{"name":"create_todo","parameters":{"content":"完成小程序新需求"}}]<|FunctionCallEnd|> 好哒，已经添加。';
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(`data: ${JSON.stringify({ id: "chatcmpl-text-tools", object: "chat.completion.chunk", created: 1, model: "fake", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: "chatcmpl-text-tools", object: "chat.completion.chunk", created: 1, model: "fake", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+      });
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve()); });
+    const path = testDatabase("text-tool-calls"); const port = (server.address() as AddressInfo).port;
+    const agent = new PythonAgentClient({ packaged: false, appPath: process.cwd(), resourcesPath: "" });
+    try {
+      await agent.health();
+      await agent.configure({ databasePath: path, petId: "daily", petName: "Daily", petDescription: "", timezone: "Asia/Shanghai", chat: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "test", model: "fake", temperature: 0.4 }, embedding: { baseUrl: "", apiKey: "", model: "" } });
+      const reply = await agent.streamReply({ petId: "daily", content: "新加俩个计划，这周完成小程序后端迁移至云环境，完成小程序新需求。", onDelta: () => undefined });
+      expect(reply.content).not.toContain("FunctionCall");
+      expect(reply.content).toContain("已添加 2 个计划");
+      const todos = (await agent.snapshot("daily")).todos;
+      expect(todos.map((todo) => todo.title)).toEqual([
+        "完成小程序新需求", "这周完成小程序后端迁移至云环境"
+      ]);
+      expect(todos.every((todo) => typeof todo.dueAt === "number")).toBe(true);
+      expect(todos[0]?.dueAt).toBe(todos[1]?.dueAt);
+    } finally {
+      agent.close(); await new Promise((resolve) => setTimeout(resolve, 500)); await cleanup(path);
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 30_000);
+
   it("runs the create_agent tool loop and persists a todo", async () => {
     const server = createServer((request, response) => {
       const chunks: Buffer[] = []; request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));

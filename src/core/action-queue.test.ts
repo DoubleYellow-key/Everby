@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { enqueueAction, shouldInterruptAction, type QueuedAction } from "./action-queue";
 
-const request = (actionId: string, priority: QueuedAction["priority"] = 10): QueuedAction => ({ actionId, source: "routine", priority, durationSeconds: 8 });
+const request = (actionId: string, priority: QueuedAction["priority"] = 10): QueuedAction => ({ actionId, source: "state", priority, durationSeconds: 8 });
 
 describe("action playback queue", () => {
   it("orders pending requests by priority while retaining FIFO order within a priority", () => {
@@ -19,9 +19,14 @@ describe("action playback queue", () => {
     expect(queue.filter((item) => item.actionId === "action-7")).toHaveLength(1);
   });
 
-  it("only allows drag feedback to interrupt an active action", () => {
+  it("applies drag, preview and event interruption policy", () => {
     expect(shouldInterruptAction("drag")).toBe(true);
     expect(shouldInterruptAction("conversation")).toBe(false);
     expect(shouldInterruptAction("reminder")).toBe(false);
+    expect(shouldInterruptAction("conversation", "state")).toBe(true);
+    expect(shouldInterruptAction("pet_click", "state")).toBe(true);
+    expect(shouldInterruptAction("preview", "conversation")).toBe(true);
+    expect(shouldInterruptAction("reminder", "conversation")).toBe(false);
+    expect(shouldInterruptAction("preview", "drag")).toBe(false);
   });
 });

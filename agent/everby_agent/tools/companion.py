@@ -9,6 +9,7 @@ from langchain.tools import ToolRuntime, tool
 from pydantic import BaseModel, Field
 
 from ..persistence.database import AgentRepository
+from .natural_time import infer_due_at
 
 
 @dataclass
@@ -22,6 +23,7 @@ class AgentContext:
     write_count: list[int] = field(default_factory=lambda: [0])
     listed_todos: list[bool] = field(default_factory=lambda: [False])
     operation_lock: LockType = field(default_factory=threading.Lock)
+    user_input: str = ""
 
     def claim_write(self) -> None:
         if self.write_count[0] >= 2:
@@ -92,13 +94,16 @@ def list_todos(runtime: ToolRuntime[AgentContext]) -> list[dict[str, Any]]:
 @tool(args_schema=CreateTodoArgs)
 def create_todo(title: str, notes: str = "", due_at: int | None = None, remind_at: int | None = None,
                 repeat: str = "none", runtime: ToolRuntime[AgentContext] = None) -> dict[str, Any]:
-    """Create a todo only when the user explicitly asks for a plan or reminder. Duplicate active titles are reused."""
+    """Create a todo only when explicitly requested. Preserve stated dates in due_at; duplicate active titles are reused."""
     assert runtime is not None
     def operation() -> dict[str, Any]:
         with runtime.context.operation_lock:
             runtime.context.claim_write()
+            resolved_due_at = due_at if due_at is not None else infer_due_at(
+                title, runtime.context.user_input, runtime.context.timezone,
+            )
             return runtime.context.repository.create_todo(
-            runtime.context.pet_id, title, notes, due_at, remind_at, repeat, "chat",
+            runtime.context.pet_id, title, notes, resolved_due_at, remind_at, repeat, "chat",
             runtime.context.run_id, runtime.tool_call_id,
             )
     return _execute(runtime, "create_todo", operation)

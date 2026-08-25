@@ -88,8 +88,9 @@ export interface AgentCapabilities {
 export type AgentStatus = "unconfigured" | "ready" | "degraded" | "busy" | "error";
 
 export type ActionRuleEvent = "pet_click" | "conversation_intent" | "reminder";
-export type PetActionSource = "routine" | "pet_click" | "conversation" | "reminder" | "preview" | "drag" | "system";
+export type PetActionSource = "state" | "pet_click" | "conversation" | "reminder" | "preview" | "drag" | "system";
 export interface PetActionRequest {
+  type?: "play";
   actionId: string;
   source: PetActionSource;
   priority: number;
@@ -98,23 +99,22 @@ export interface PetActionRequest {
   triggeredAt?: number;
 }
 
-export type ActionRuleTrigger =
-  | {
-      type: "routine";
-      weekdays: number[];
-      startTime: string;
-      endTime: string;
-      minIntervalMinutes: number;
-      maxIntervalMinutes: number;
-      probability: number;
-    }
-  | {
-      type: "event";
-      event: ActionRuleEvent;
-      intent?: ActionIntent;
-      probability: number;
-      cooldownSeconds: number;
-    };
+export interface PetActionSignal {
+  type: "event";
+  event: ActionRuleEvent;
+  intent?: ActionIntent;
+  source: "pet_click" | "conversation" | "reminder" | "system";
+}
+export type PetActionInput = PetActionRequest | PetActionSignal | string;
+export interface PetPresence { locked: boolean }
+
+export interface ActionRuleTrigger {
+  type: "event";
+  event: ActionRuleEvent;
+  intent?: ActionIntent;
+  probability: number;
+  cooldownSeconds: number;
+}
 
 export interface ActionRule {
   id: string;
@@ -131,6 +131,25 @@ export interface ActionRule {
 
 export type CreateActionRuleInput = Pick<ActionRule, "name" | "actionId" | "enabled" | "durationSeconds" | "trigger">;
 export type UpdateActionRuleInput = Partial<CreateActionRuleInput>;
+
+export type ActionMode = "normal" | "focus" | "rest";
+export interface ActionProfileItem { actionId: string; weight: number }
+export interface ActionProfile {
+  petId: string;
+  mode: ActionMode;
+  activityRatio: number;
+  strategy: "weighted" | "fixed";
+  items: ActionProfileItem[];
+  fallbackActionId: string;
+  updatedAt: number;
+}
+export interface ActionModeSession {
+  petId: string;
+  mode: ActionMode;
+  source: "manual" | "conversation" | "system";
+  startedAt: number;
+  endsAt: number | null;
+}
 
 export interface MemoryItem {
   id: string;
@@ -196,6 +215,8 @@ export interface PetRuntime {
   canvas: { width: number; height: number; anchorX: number; anchorY: number };
   animations: PetAnimation[];
   actionRules: ActionRule[];
+  actionProfiles: ActionProfile[];
+  actionMode: ActionModeSession;
   settings: AppSettings;
 }
 
@@ -220,6 +241,8 @@ export interface AppSnapshot {
   memorySummary: string;
   motionPacks: MotionPackSummary[];
   actionRules: ActionRule[];
+  actionProfiles: ActionProfile[];
+  actionMode: ActionModeSession;
   todos: TodoItem[];
   memories: MemoryItem[];
   agentCapabilities: AgentCapabilities;
@@ -255,6 +278,9 @@ export interface EverbyApi {
   updateActionRule(id: string, patch: UpdateActionRuleInput): Promise<ActionRule>;
   deleteActionRule(id: string): Promise<void>;
   recordActionRuleTrigger(id: string, triggeredAt: number): Promise<void>;
+  updateActionProfile(mode: ActionMode, patch: Pick<ActionProfile, "activityRatio" | "strategy" | "items" | "fallbackActionId">): Promise<ActionProfile>;
+  startActionMode(mode: "focus" | "rest", durationMinutes: number): Promise<ActionModeSession>;
+  stopActionMode(): Promise<ActionModeSession>;
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
   updateTodo(id: string, patch: UpdateTodoInput): Promise<TodoItem>;
   deleteTodo(id: string): Promise<void>;
@@ -263,6 +289,7 @@ export interface EverbyApi {
   onChatDelta(callback: (delta: ChatDelta) => void): () => void;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onRuntime(callback: (runtime: PetRuntime) => void): () => void;
-  onPetAction(callback: (request: PetActionRequest | string) => void): () => void;
+  onPetAction(callback: (request: PetActionInput) => void): () => void;
+  onPetPresence(callback: (presence: PetPresence) => void): () => void;
   onPetSpeech(callback: (message: string) => void): () => void;
 }

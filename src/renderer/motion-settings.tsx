@@ -1,20 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, PackagePlus, Pencil, Play, Plus, Save, Sparkles, Trash2, X } from "lucide-react";
 import { frameAtTime } from "../core/timeline";
-import { ACTION_INTENTS, type ActionIntent, type ActionRule, type AppSnapshot, type CreateActionRuleInput, type MotionCatalog, type PetAnimation } from "../shared/contracts";
+import { ACTION_INTENTS, type ActionIntent, type ActionMode, type ActionProfile, type ActionRule, type AppSnapshot, type CreateActionRuleInput, type MotionCatalog, type PetAnimation } from "../shared/contracts";
 
-type MotionView = "library" | "rules" | "packs";
+type MotionView = "library" | "modes" | "rules" | "packs";
 type DraftRule = CreateActionRuleInput & { id?: string };
-const week = [{ value: 1, label: "一" }, { value: 2, label: "二" }, { value: 3, label: "三" }, { value: 4, label: "四" }, { value: 5, label: "五" }, { value: 6, label: "六" }, { value: 0, label: "日" }];
 const intentLabels: Record<ActionIntent, string> = { idle: "待机", greet: "问候", happy: "开心", encourage: "鼓励", think: "思考", work: "工作", wait: "等待", celebrate: "庆祝", tired: "疲劳", confused: "困惑" };
+const modeLabels: Record<ActionMode, { title: string; detail: string }> = {
+  normal: { title: "常态", detail: "自然穿插工作、思考、问候和舒展动作" },
+  focus: { title: "专注", detail: "持续使用一个循环动作，扩展不可用时自动回退" },
+  rest: { title: "休息", detail: "在舒展与恢复动作之间轮换" }
+};
 
-function newRoutine(actionId: string): DraftRule {
-  return {
-    name: "日常动作", actionId, enabled: true, durationSeconds: 8,
-    trigger: { type: "routine", weekdays: [0, 1, 2, 3, 4, 5, 6], startTime: "08:00", endTime: "23:00", minIntervalMinutes: 10, maxIntervalMinutes: 20, probability: 1 }
-  };
+function newEventRule(actionId: string): DraftRule {
+  return { name: "点击回应", actionId, enabled: true, durationSeconds: 8, trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 5 } };
 }
-
 function actionName(action: PetAnimation): string { return action.label || action.id; }
 function actionDuration(action: PetAnimation): number { return action.frames.reduce((total, frame) => total + frame.durationMs, 0); }
 
@@ -33,10 +33,8 @@ function ActionPreview({ action, sheetUrl }: { action: PetAnimation; sheetUrl: s
     const draw = (now: number) => {
       context.clearRect(0, 0, 192, 208);
       const frame = action.frames[frameAtTime(action.frames, now - started, true)];
-      if (frame.src) {
-        const image = images.get(frame.src);
-        if (image?.complete) context.drawImage(image, 0, 0, 192, 208);
-      } else if (atlas.complete) context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, 0, 0, 192, 208);
+      if (frame.src) { const image = images.get(frame.src); if (image?.complete) context.drawImage(image, 0, 0, 192, 208); }
+      else if (atlas.complete) context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, 0, 0, 192, 208);
       animationFrame = requestAnimationFrame(draw);
     };
     animationFrame = requestAnimationFrame(draw);
@@ -49,38 +47,45 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val
   return <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}><span/></button>;
 }
 
-function RuleEditor({ draft, actions, onChange, onSave, onCancel }: {
-  draft: DraftRule; actions: PetAnimation[]; onChange: (next: DraftRule) => void; onSave: () => void; onCancel: () => void;
-}): React.JSX.Element {
-  const routine = draft.trigger.type === "routine" ? draft.trigger : null;
-  const event = draft.trigger.type === "event" ? draft.trigger : null;
-  return <form className="rule-editor" onSubmit={(formEvent) => { formEvent.preventDefault(); onSave(); }}>
-    <div className="rule-editor-head"><div><strong>{draft.id ? "编辑触发规则" : "新建触发规则"}</strong><span>{draft.id ? "修改后立即应用" : "规则仅用于当前角色"}</span></div><button type="button" className="icon-button" title="关闭" aria-label="关闭规则编辑器" onClick={onCancel}><X size={17}/></button></div>
+function RuleEditor({ draft, actions, onChange, onSave, onCancel }: { draft: DraftRule; actions: PetAnimation[]; onChange: (next: DraftRule) => void; onSave: () => void; onCancel: () => void }): React.JSX.Element {
+  const trigger = draft.trigger;
+  return <form className="rule-editor" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+    <div className="rule-editor-head"><div><strong>{draft.id ? "编辑事件规则" : "新建事件规则"}</strong><span>提醒、对话或点击发生时执行</span></div><button type="button" className="icon-button" title="关闭" aria-label="关闭规则编辑器" onClick={onCancel}><X size={17}/></button></div>
     <div className="rule-form-grid">
-      <label><span>规则名称</span><input value={draft.name} maxLength={80} required onChange={(e) => onChange({ ...draft, name: e.target.value })}/></label>
-      <label><span>播放动作</span><select value={draft.actionId} onChange={(e) => onChange({ ...draft, actionId: e.target.value })}>{actions.map((action) => <option key={action.id} value={action.id}>{actionName(action)} · {action.source === "extension" ? action.packName : "基础"}{action.enabled === false ? "（已停用）" : ""}</option>)}</select></label>
-      <label><span>触发方式</span><select value={draft.trigger.type} onChange={(e) => onChange({ ...draft, trigger: e.target.value === "routine" ? newRoutine(draft.actionId).trigger : { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 5 } })}><option value="routine">日常调度</option><option value="event">事件触发</option></select></label>
-      <label><span>循环动作时长</span><span className="number-field"><input type="number" min={1} max={60} value={draft.durationSeconds} onChange={(e) => onChange({ ...draft, durationSeconds: Number(e.target.value) })}/><small>秒</small></span></label>
-      {routine && <>
-        <label><span>开始时间</span><input type="time" value={routine.startTime} onChange={(e) => onChange({ ...draft, trigger: { ...routine, startTime: e.target.value } })}/></label>
-        <label><span>结束时间</span><input type="time" value={routine.endTime} onChange={(e) => onChange({ ...draft, trigger: { ...routine, endTime: e.target.value } })}/></label>
-        <label><span>最小间隔</span><span className="number-field"><input type="number" min={1} max={10080} value={routine.minIntervalMinutes} onChange={(e) => onChange({ ...draft, trigger: { ...routine, minIntervalMinutes: Number(e.target.value) } })}/><small>分钟</small></span></label>
-        <label><span>最大间隔</span><span className="number-field"><input type="number" min={routine.minIntervalMinutes} max={10080} value={routine.maxIntervalMinutes} onChange={(e) => onChange({ ...draft, trigger: { ...routine, maxIntervalMinutes: Number(e.target.value) } })}/><small>分钟</small></span></label>
-        <fieldset className="weekday-field"><legend>生效星期</legend><div>{week.map((day) => <button type="button" key={day.value} aria-pressed={routine.weekdays.includes(day.value)} className={routine.weekdays.includes(day.value) ? "selected" : ""} onClick={() => onChange({ ...draft, trigger: { ...routine, weekdays: routine.weekdays.includes(day.value) ? routine.weekdays.filter((value) => value !== day.value) : [...routine.weekdays, day.value] } })}>{day.label}</button>)}</div></fieldset>
-      </>}
-      {event && <>
-        <label><span>事件</span><select aria-label="事件类型" value={event.event} onChange={(e) => { const value = e.target.value as typeof event.event; onChange({ ...draft, trigger: { ...event, event: value, intent: value === "conversation_intent" ? (event.intent ?? "happy") : undefined } }); }}><option value="pet_click">点击桌宠</option><option value="conversation_intent">对话语义</option><option value="reminder">提醒到期</option></select></label>
-        {event.event === "conversation_intent" && <label><span>语义意图</span><select value={event.intent ?? "happy"} onChange={(e) => onChange({ ...draft, trigger: { ...event, intent: e.target.value as ActionIntent } })}>{ACTION_INTENTS.map((intent) => <option key={intent} value={intent}>{intentLabels[intent]}</option>)}</select></label>}
-        <label><span>冷却时间</span><span className="number-field"><input type="number" min={0} max={86400} value={event.cooldownSeconds} onChange={(e) => onChange({ ...draft, trigger: { ...event, cooldownSeconds: Number(e.target.value) } })}/><small>秒</small></span></label>
-      </>}
-      <label className="probability-field"><span>触发概率 <strong>{Math.round(draft.trigger.probability * 100)}%</strong></span><input type="range" min={0} max={1} step={0.05} value={draft.trigger.probability} onChange={(e) => onChange({ ...draft, trigger: { ...draft.trigger, probability: Number(e.target.value) } })}/></label>
+      <label><span>规则名称</span><input value={draft.name} maxLength={80} required onChange={(event) => onChange({ ...draft, name: event.target.value })}/></label>
+      <label><span>播放动作</span><select value={draft.actionId} onChange={(event) => onChange({ ...draft, actionId: event.target.value })}>{actions.map((action) => <option key={action.id} value={action.id}>{actionName(action)} · {action.source === "extension" ? action.packName : "基础"}{action.enabled === false ? "（已停用）" : ""}</option>)}</select></label>
+      <label><span>事件</span><select aria-label="事件类型" value={trigger.event} onChange={(event) => { const value = event.target.value as typeof trigger.event; onChange({ ...draft, trigger: { ...trigger, event: value, intent: value === "conversation_intent" ? (trigger.intent ?? "happy") : undefined } }); }}><option value="pet_click">点击桌宠</option><option value="conversation_intent">对话语义</option><option value="reminder">提醒到期</option></select></label>
+      {trigger.event === "conversation_intent" && <label><span>语义意图</span><select value={trigger.intent ?? "happy"} onChange={(event) => onChange({ ...draft, trigger: { ...trigger, intent: event.target.value as ActionIntent } })}>{ACTION_INTENTS.map((intent) => <option key={intent} value={intent}>{intentLabels[intent]}</option>)}</select></label>}
+      <label><span>循环动作时长</span><span className="number-field"><input type="number" min={1} max={60} value={draft.durationSeconds} onChange={(event) => onChange({ ...draft, durationSeconds: Number(event.target.value) })}/><small>秒</small></span></label>
+      <label><span>冷却时间</span><span className="number-field"><input type="number" min={0} max={86400} value={trigger.cooldownSeconds} onChange={(event) => onChange({ ...draft, trigger: { ...trigger, cooldownSeconds: Number(event.target.value) } })}/><small>秒</small></span></label>
+      <label className="probability-field"><span>触发概率 <strong>{Math.round(trigger.probability * 100)}%</strong></span><input type="range" min={0} max={1} step={0.05} value={trigger.probability} onChange={(event) => onChange({ ...draft, trigger: { ...trigger, probability: Number(event.target.value) } })}/></label>
     </div>
     <div className="rule-editor-actions"><button className="primary"><Save size={16}/>保存规则</button><Toggle label="启用规则" checked={draft.enabled} onChange={(enabled) => onChange({ ...draft, enabled })}/></div>
   </form>;
 }
 
+function ModeEditor({ profile, actions, onSave }: { profile: ActionProfile; actions: PetAnimation[]; onSave: (profile: ActionProfile) => void }): React.JSX.Element {
+  const [draft, setDraft] = useState(profile);
+  const [addActionId, setAddActionId] = useState("");
+  useEffect(() => setDraft(profile), [profile]);
+  const available = new Set(actions.filter((action) => action.enabled !== false).map((action) => action.id));
+  const candidates = actions.filter((action) => !draft.items.some((item) => item.actionId === action.id) && action.id !== "idle");
+  const totalWeight = draft.items.reduce((sum, item) => sum + item.weight, 0);
+  const labelFor = (id: string) => actionName(actions.find((action) => action.id === id) ?? { id, loop: false, weight: 1, intents: [], frames: [] });
+  function patchItem(actionId: string, weight: number): void { setDraft({ ...draft, items: draft.items.map((item) => item.actionId === actionId ? { ...item, weight } : item) }); }
+  function addItem(): void { if (!addActionId) return; setDraft({ ...draft, items: [...draft.items, { actionId: addActionId, weight: 1 }] }); setAddActionId(""); }
+  return <article className={`mode-editor ${profile.mode === "focus" ? "focus" : ""}`}>
+    <header><div><strong>{modeLabels[profile.mode].title}</strong><span>{modeLabels[profile.mode].detail}</span></div><div className="mode-ratio"><strong>{Math.round(draft.activityRatio * 100)}%</strong><span>非待机</span></div></header>
+    <label className="activity-slider"><span>目标活跃度</span><input aria-label={`${modeLabels[profile.mode].title}目标活跃度`} type="range" min={5} max={95} step={5} value={draft.activityRatio * 100} onChange={(event) => setDraft({ ...draft, activityRatio: Number(event.target.value) / 100 })}/><small>预计待机 {Math.round((1 - draft.activityRatio) * 100)}% · 非待机 {Math.round(draft.activityRatio * 100)}%</small></label>
+    {profile.mode === "focus" ? <label className="fixed-action"><span>固定循环动作</span><select value={draft.items[0]?.actionId ?? "daily-focus-cycle"} onChange={(event) => setDraft({ ...draft, strategy: "fixed", items: [{ actionId: event.target.value, weight: 1 }] })}>{actions.filter((action) => action.loop && action.id !== "idle").map((action) => <option key={action.id} value={action.id}>{actionName(action)} · {action.source === "extension" ? action.packName : "基础"}</option>)}</select>{!available.has(draft.items[0]?.actionId ?? "") && <small className="unavailable-copy">当前动作不可用，将自动使用 {labelFor(draft.fallbackActionId)}</small>}</label> : <div className="profile-items">
+      {draft.items.map((item) => <div className={!available.has(item.actionId) ? "unavailable" : ""} key={item.actionId}><span><strong>{labelFor(item.actionId)}</strong><small>{available.has(item.actionId) ? `预计选择 ${totalWeight ? Math.round(item.weight / totalWeight * 100) : 0}%` : "不可用，将跳过"}</small></span><label><span>权重</span><input aria-label={`${labelFor(item.actionId)} 权重`} type="number" min={1} max={10} value={item.weight} onChange={(event) => patchItem(item.actionId, Number(event.target.value))}/></label><button type="button" className="icon-button danger" title="移除动作" aria-label={`移除 ${labelFor(item.actionId)}`} disabled={draft.items.length <= 1} onClick={() => setDraft({ ...draft, items: draft.items.filter((entry) => entry.actionId !== item.actionId) })}><Trash2 size={16}/></button></div>)}
+      <div className="profile-add"><select aria-label={`添加${modeLabels[profile.mode].title}动作`} value={addActionId} onChange={(event) => setAddActionId(event.target.value)}><option value="">选择动作</option>{candidates.map((action) => <option key={action.id} value={action.id}>{actionName(action)} · {action.source === "extension" ? action.packName : "基础"}</option>)}</select><button type="button" className="secondary" disabled={!addActionId} onClick={addItem}><Plus size={16}/>添加</button></div>
+    </div>}
+    <footer><button type="button" className="primary" onClick={() => onSave(draft)}><Save size={16}/>保存{modeLabels[profile.mode].title}配置</button></footer>
+  </article>;
+}
+
 function describeRule(rule: ActionRule): string {
-  if (rule.trigger.type === "routine") return `${rule.trigger.startTime}–${rule.trigger.endTime} · ${rule.trigger.minIntervalMinutes}–${rule.trigger.maxIntervalMinutes} 分钟 · ${Math.round(rule.trigger.probability * 100)}%`;
   const event = rule.trigger.event === "pet_click" ? "点击桌宠" : rule.trigger.event === "reminder" ? "提醒到期" : `对话：${intentLabels[rule.trigger.intent ?? "happy"]}`;
   return `${event} · 冷却 ${rule.trigger.cooldownSeconds} 秒 · ${Math.round(rule.trigger.probability * 100)}%`;
 }
@@ -96,41 +101,16 @@ export function MotionSettings({ snapshot, setStatus }: { snapshot: AppSnapshot;
   const actions = catalog?.actions ?? [];
   const selected = actions.find((action) => action.id === selectedId) ?? actions[0];
   const available = useMemo(() => new Set(actions.filter((action) => action.enabled !== false).map((action) => action.id)), [actions]);
-
-  async function saveRule(): Promise<void> {
-    if (!draft) return;
-    try {
-      const { id, ...input } = draft;
-      if (id) await window.everby.updateActionRule(id, input); else await window.everby.createActionRule(input);
-      setDraft(null); setStatus("动作规则已保存");
-    } catch (error) { setStatus(error instanceof Error ? error.message : "动作规则保存失败"); }
-  }
-
-  async function importPack(): Promise<void> {
-    try { const pack = await window.everby.importMotion(); if (pack) setStatus(`已导入 ${pack.name}`); }
-    catch (error) { setStatus(error instanceof Error ? error.message : "动作扩展导入失败"); }
-  }
+  async function saveRule(): Promise<void> { if (!draft) return; try { const { id, ...input } = draft; if (id) await window.everby.updateActionRule(id, input); else await window.everby.createActionRule(input); setDraft(null); setStatus("事件规则已保存"); } catch (error) { setStatus(error instanceof Error ? error.message : "事件规则保存失败"); } }
+  async function saveProfile(profile: ActionProfile): Promise<void> { try { await window.everby.updateActionProfile(profile.mode, { activityRatio: profile.activityRatio, strategy: profile.strategy, items: profile.items, fallbackActionId: profile.fallbackActionId }); setStatus(`${modeLabels[profile.mode].title}配置已保存`); } catch (error) { setStatus(error instanceof Error ? error.message : "状态配置保存失败"); } }
+  async function importPack(): Promise<void> { try { const pack = await window.everby.importMotion(); if (pack) setStatus(`已导入 ${pack.name}`); } catch (error) { setStatus(error instanceof Error ? error.message : "动作扩展导入失败"); } }
 
   return <section className="motions-page">
-    <header className="page-title"><h1>动作</h1><p>{activePet?.name} 的动作、触发规则和扩展包。</p></header>
-    <div className="segmented" role="tablist" aria-label="动作设置视图">
-      {([['library', '动作库'], ['rules', '触发规则'], ['packs', '扩展包']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => { setView(id); setDraft(null); }}>{label}</button>)}
-    </div>
-
-    {view === "library" && <div className="motion-library">
-      <div className="action-list" role="listbox" aria-label="可用动作">{actions.map((action) => <button key={action.id} role="option" aria-selected={selected?.id === action.id} className={selected?.id === action.id ? "active" : ""} onClick={() => setSelectedId(action.id)}><span><strong>{actionName(action)}</strong><small>{action.id}</small></span><em className={action.source === "extension" ? "extension" : "base"}>{action.source === "extension" ? action.packName : "基础"}</em></button>)}</div>
-      {selected && <div className="action-inspector"><ActionPreview action={selected} sheetUrl={activePet?.sheetUrl ?? ""}/><div className="action-title"><div><strong>{actionName(selected)}</strong><span>{selected.id}</span></div><button className="primary icon-command" title="在桌面播放" aria-label={`播放 ${actionName(selected)}`} disabled={selected.enabled === false} onClick={() => void window.everby.previewAction(selected.id)}><Play size={18}/></button></div><dl><div><dt>来源</dt><dd>{selected.source === "extension" ? selected.packName : "基础动作"}</dd></div><div><dt>模式</dt><dd>{selected.loop ? "循环" : "单次"}</dd></div><div><dt>时长</dt><dd>{(actionDuration(selected) / 1000).toFixed(1)} 秒</dd></div><div><dt>语义</dt><dd>{selected.intents.map((intent) => intentLabels[intent]).join("、") || "无"}</dd></div></dl>{selected.enabled === false && <p className="motion-warning">扩展包已停用，启用后可播放。</p>}</div>}
-    </div>}
-
-    {view === "rules" && <>
-      <div className="section-actions"><button className="primary" disabled={actions.length === 0} onClick={() => setDraft(newRoutine(actions.find((action) => action.enabled !== false)?.id ?? actions[0]?.id ?? "idle"))}><Plus size={17}/>新建规则</button></div>
-      {draft && <RuleEditor draft={draft} actions={actions} onChange={setDraft} onSave={() => void saveRule()} onCancel={() => setDraft(null)}/>}
-      <div className="rule-list">{snapshot.actionRules.length === 0 ? <div className="motion-empty"><Sparkles size={26}/><strong>还没有触发规则</strong></div> : snapshot.actionRules.map((rule) => <div className={`rule-row ${available.has(rule.actionId) ? "" : "unavailable"}`} key={rule.id}><div><strong>{rule.name}</strong><span>{actionName(actions.find((action) => action.id === rule.actionId) ?? { id: rule.actionId, loop: false, weight: 1, intents: [], frames: [] })} · {describeRule(rule)}</span>{!available.has(rule.actionId) && <small>动作不可用，规则不会执行</small>}</div><Toggle label={`启用 ${rule.name}`} checked={rule.enabled} onChange={(enabled) => void window.everby.updateActionRule(rule.id, { enabled })}/><button className="icon-button" title="复制" aria-label={`复制 ${rule.name}`} onClick={() => void window.everby.createActionRule({ name: `${rule.name} 副本`, actionId: rule.actionId, enabled: false, durationSeconds: rule.durationSeconds, trigger: rule.trigger })}><Copy size={16}/></button><button className="icon-button" title="编辑" aria-label={`编辑 ${rule.name}`} onClick={() => setDraft({ id: rule.id, name: rule.name, actionId: rule.actionId, enabled: rule.enabled, durationSeconds: rule.durationSeconds, trigger: rule.trigger })}><Pencil size={16}/></button><button className="icon-button danger" title="删除" aria-label={`删除 ${rule.name}`} onClick={() => void window.everby.deleteActionRule(rule.id)}><Trash2 size={16}/></button></div>)}</div>
-    </>}
-
-    {view === "packs" && <>
-      <div className="section-actions"><button className="primary" onClick={() => void importPack()}><PackagePlus size={17}/>导入 .soulmotion</button></div>
-      <div className="motion-pack-list">{snapshot.motionPacks.length === 0 ? <div className="motion-empty"><Sparkles size={26}/><strong>还没有扩展动作</strong></div> : snapshot.motionPacks.map((pack) => <div className="motion-pack" key={pack.packId}><div className="motion-pack-head"><div><strong>{pack.name}</strong><span>v{pack.version} · {pack.animationCount} 个动作</span></div><Toggle label={`启用 ${pack.name}`} checked={pack.enabled} onChange={(enabled) => void window.everby.setMotionEnabled(pack.packId, enabled)}/><button className="icon-button danger" title="卸载" aria-label={`卸载 ${pack.name}`} onClick={() => void window.everby.removeMotion(pack.packId)}><Trash2 size={17}/></button></div><div className="pack-actions">{actions.filter((action) => action.packId === pack.packId).map((action) => <button key={action.id} onClick={() => { setSelectedId(action.id); setView("library"); }}><span>{actionName(action)}</span><Play size={14}/></button>)}</div></div>)}</div>
-    </>}
+    <header className="page-title"><h1>动作</h1><p>{activePet?.name} 的动作导演、事件回应和扩展包。</p></header>
+    <div className="segmented motion-tabs" role="tablist" aria-label="动作设置视图">{([['library', '动作库'], ['modes', '状态模式'], ['rules', '事件规则'], ['packs', '扩展包']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => { setView(id); setDraft(null); }}>{label}</button>)}</div>
+    {view === "library" && <div className="motion-library"><div className="action-list" role="listbox" aria-label="可用动作">{actions.map((action) => <button key={action.id} role="option" aria-selected={selected?.id === action.id} className={selected?.id === action.id ? "active" : ""} onClick={() => setSelectedId(action.id)}><span><strong>{actionName(action)}</strong><small>{action.id}</small></span><em className={action.source === "extension" ? "extension" : "base"}>{action.source === "extension" ? action.packName : "基础"}</em></button>)}</div>{selected && <div className="action-inspector"><ActionPreview action={selected} sheetUrl={activePet?.sheetUrl ?? ""}/><div className="action-title"><div><strong>{actionName(selected)}</strong><span>{selected.id}</span></div><button className="primary icon-command" title="在桌面播放" aria-label={`播放 ${actionName(selected)}`} disabled={selected.enabled === false} onClick={() => void window.everby.previewAction(selected.id)}><Play size={18}/></button></div><dl><div><dt>来源</dt><dd>{selected.source === "extension" ? selected.packName : "基础动作"}</dd></div><div><dt>模式</dt><dd>{selected.loop ? "循环" : "单次"}</dd></div><div><dt>时长</dt><dd>{(actionDuration(selected) / 1000).toFixed(1)} 秒</dd></div><div><dt>语义</dt><dd>{selected.intents.map((intent) => intentLabels[intent]).join("、") || "无"}</dd></div></dl>{selected.enabled === false && <p className="motion-warning">扩展包已停用，启用后可播放。</p>}</div>}</div>}
+    {view === "modes" && <div className="mode-list">{snapshot.actionProfiles.map((profile) => <ModeEditor key={profile.mode} profile={profile} actions={actions} onSave={(value) => void saveProfile(value)}/>)}</div>}
+    {view === "rules" && <><div className="section-actions"><button className="primary" disabled={actions.length === 0} onClick={() => setDraft(newEventRule(actions.find((action) => action.enabled !== false)?.id ?? actions[0]?.id ?? "wave"))}><Plus size={17}/>新建规则</button></div>{draft && <RuleEditor draft={draft} actions={actions} onChange={setDraft} onSave={() => void saveRule()} onCancel={() => setDraft(null)}/>}<div className="rule-list">{snapshot.actionRules.length === 0 ? <div className="motion-empty"><Sparkles size={26}/><strong>还没有事件规则</strong></div> : snapshot.actionRules.map((rule) => <div className={`rule-row ${available.has(rule.actionId) ? "" : "unavailable"}`} key={rule.id}><div><strong>{rule.name}</strong><span>{actionName(actions.find((action) => action.id === rule.actionId) ?? { id: rule.actionId, loop: false, weight: 1, intents: [], frames: [] })} · {describeRule(rule)}</span>{!available.has(rule.actionId) && <small>动作不可用，规则不会执行</small>}</div><Toggle label={`启用 ${rule.name}`} checked={rule.enabled} onChange={(enabled) => void window.everby.updateActionRule(rule.id, { enabled })}/><button className="icon-button" title="复制" aria-label={`复制 ${rule.name}`} onClick={() => void window.everby.createActionRule({ name: `${rule.name} 副本`, actionId: rule.actionId, enabled: false, durationSeconds: rule.durationSeconds, trigger: rule.trigger })}><Copy size={16}/></button><button className="icon-button" title="编辑" aria-label={`编辑 ${rule.name}`} onClick={() => setDraft({ id: rule.id, name: rule.name, actionId: rule.actionId, enabled: rule.enabled, durationSeconds: rule.durationSeconds, trigger: rule.trigger })}><Pencil size={16}/></button><button className="icon-button danger" title="删除" aria-label={`删除 ${rule.name}`} onClick={() => void window.everby.deleteActionRule(rule.id)}><Trash2 size={16}/></button></div>)}</div></>}
+    {view === "packs" && <><div className="section-actions"><button className="primary" onClick={() => void importPack()}><PackagePlus size={17}/>导入 .soulmotion</button></div><div className="motion-pack-list">{snapshot.motionPacks.length === 0 ? <div className="motion-empty"><Sparkles size={26}/><strong>还没有扩展动作</strong></div> : snapshot.motionPacks.map((pack) => <div className="motion-pack" key={pack.packId}><div className="motion-pack-head"><div><strong>{pack.name}</strong><span>v{pack.version} · {pack.animationCount} 个动作</span></div><Toggle label={`启用 ${pack.name}`} checked={pack.enabled} onChange={(enabled) => void window.everby.setMotionEnabled(pack.packId, enabled)}/><button className="icon-button danger" title="卸载" aria-label={`卸载 ${pack.name}`} onClick={() => void window.everby.removeMotion(pack.packId)}><Trash2 size={17}/></button></div><div className="pack-actions">{actions.filter((action) => action.packId === pack.packId).map((action) => <button key={action.id} onClick={() => { setSelectedId(action.id); setView("library"); }}><span>{actionName(action)}</span><Play size={14}/></button>)}</div></div>)}</div></>}
   </section>;
 }

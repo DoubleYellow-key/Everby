@@ -1,8 +1,10 @@
 import "./pet.css";
 import { enqueueAction, shouldInterruptAction, type QueuedAction } from "../core/action-queue";
-import { isRoutineRuleActive, nextRoutineTriggerAt, selectEventRule } from "../core/action-rules";
+import { actionPriority, consumeDirectorActivity, createDirectorState, switchDirectorMode, tickDirector } from "../core/action-director";
+import { selectEventRule } from "../core/action-rules";
+import { chooseAnimation } from "../core/behavior";
 import { frameAtTime } from "../core/timeline";
-import type { ActionRule, PetActionRequest, PetAnimation, PetRuntime } from "../shared/contracts";
+import type { ActionRule, PetActionInput, PetActionRequest, PetActionSignal, PetAnimation, PetRuntime } from "../shared/contracts";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#pet-canvas")!;
 const context = canvas.getContext("2d", { alpha: true })!;
@@ -22,8 +24,8 @@ let dragging = false;
 let dragOffset = { x: 0, y: 0 };
 let pointerStart = { x: 0, y: 0 };
 let lastFrame = performance.now();
-let lastRoutineCheck = 0;
-const routineSchedule = new Map<string, number>();
+let directorState = createDirectorState(Date.now());
+let locked = false;
 const extensionImages = new Map<string, HTMLImageElement>();
 
 function resize(): void {
@@ -46,7 +48,15 @@ function showIdle(): void {
   document.documentElement.dataset.animation = animation.id;
 }
 
+function settleCurrentActivity(now = performance.now()): void {
+  if (!currentRequest || !animation) return;
+  const allocated = animation.loop ? currentRequest.durationSeconds : animationDuration(animation) / 1_000;
+  const actual = Math.max(0, Math.min(allocated, (now - animationStarted) / 1_000));
+  directorState = consumeDirectorActivity(directorState, currentRequest.source === "state" ? -(allocated - actual) : actual);
+}
+
 function startAction(request: QueuedAction): void {
+  settleCurrentActivity();
   currentRequest = request;
   animation = findAnimation(request.actionId);
   animationStarted = performance.now();
@@ -55,16 +65,19 @@ function startAction(request: QueuedAction): void {
 }
 
 function finishAction(): void {
+  settleCurrentActivity();
+  currentRequest = null;
   const next = pendingActions.shift();
   if (next) startAction(next); else showIdle();
 }
 
 function requestAction(value: PetActionRequest | string): void {
   const request: QueuedAction = typeof value === "string"
-    ? { actionId: value, source: value === "drag" ? "drag" : "system", priority: value === "drag" ? 100 : 50, durationSeconds: value === "drag" ? 60 : 8 }
-    : value;
-  if (!runtime.animations.some((item) => item.id === request.actionId)) return;
-  if (shouldInterruptAction(request.source) || (currentRequest?.source === "conversation" && request.source === "conversation")) {
+    ? { actionId: value, source: value === "drag" ? "drag" : "system", priority: actionPriority(value === "drag" ? "drag" : "system"), durationSeconds: value === "drag" ? 60 : 8 }
+    : { ...value, priority: actionPriority(value.source) };
+  const requestedAnimation = runtime.animations.find((item) => item.id === request.actionId);
+  if (!requestedAnimation) return;
+  if (shouldInterruptAction(request.source, currentRequest?.source) || (currentRequest?.source === "conversation" && request.source === "conversation")) {
     startAction(request); return;
   }
   if (!currentRequest) { startAction(request); return; }
@@ -83,33 +96,28 @@ function recordRule(rule: ActionRule, now: number): void {
 }
 
 function requestClickAction(): void {
-  const now = Date.now();
-  const rule = selectEventRule(runtime.actionRules, { event: "pet_click" }, new Set(runtime.animations.map((item) => item.id)), now);
-  if (rule) {
-    recordRule(rule, now);
-    requestAction({ actionId: rule.actionId, source: "pet_click", priority: 60, durationSeconds: rule.durationSeconds, ruleId: rule.id, triggeredAt: now });
-  } else requestAction({ actionId: "wave", source: "pet_click", priority: 60, durationSeconds: 6 });
+  requestEvent({ type: "event", event: "pet_click", source: "pet_click", intent: "happy" });
 }
 
-function scheduleRoutines(now: number): void {
-  if (runtime.settings.paused || now - lastRoutineCheck < 1_000) return;
-  lastRoutineCheck = now;
-  const wallClock = Date.now();
+function requestEvent(signal: PetActionSignal): void {
+  const now = Date.now();
   const available = new Set(runtime.animations.map((item) => item.id));
-  for (const rule of runtime.actionRules) {
-    if (rule.trigger.type !== "routine") continue;
-    let nextAt = routineSchedule.get(rule.id);
-    if (nextAt === undefined) {
-      nextAt = nextRoutineTriggerAt(rule);
-      if (nextAt <= wallClock) nextAt = nextRoutineTriggerAt({ ...rule, lastTriggeredAt: wallClock });
-      routineSchedule.set(rule.id, nextAt);
-    }
-    if (wallClock < nextAt) continue;
-    routineSchedule.set(rule.id, nextRoutineTriggerAt({ ...rule, lastTriggeredAt: wallClock }));
-    if (!isRoutineRuleActive(rule, new Date(wallClock)) || !available.has(rule.actionId) || rule.trigger.probability <= 0 || Math.random() >= rule.trigger.probability) continue;
-    recordRule(rule, wallClock);
-    requestAction({ actionId: rule.actionId, source: "routine", priority: 10, durationSeconds: rule.durationSeconds, ruleId: rule.id, triggeredAt: wallClock });
-  }
+  const rule = selectEventRule(runtime.actionRules, { event: signal.event, intent: signal.intent }, available, now);
+  if (rule) recordRule(rule, now);
+  const fallback = signal.event === "pet_click" ? "wave" : chooseAnimation(signal.intent ?? "idle", runtime.animations);
+  const source = signal.source === "system" ? "system" : signal.source;
+  const priority = actionPriority(source);
+  requestAction({ type: "play", actionId: rule?.actionId ?? fallback, source, priority, durationSeconds: rule?.durationSeconds ?? 8, ruleId: rule?.id, triggeredAt: rule ? now : undefined });
+}
+
+function scheduleBackground(): void {
+  if (currentRequest || !runtime) return;
+  const profile = runtime.actionProfiles.find((item) => item.mode === runtime.actionMode.mode) ?? runtime.actionProfiles[0];
+  if (!profile) return;
+  if (directorState.mode !== runtime.actionMode.mode) directorState = switchDirectorMode(directorState, runtime.actionMode.mode, profile, Date.now());
+  const result = tickDirector(directorState, { now: Date.now(), profile, animations: runtime.animations, paused: runtime.settings.paused, locked });
+  directorState = result.state;
+  if (result.request) startAction(result.request);
 }
 
 function draw(now: number): void {
@@ -117,8 +125,8 @@ function draw(now: number): void {
   resizeIfNeeded();
   context.clearRect(0, 0, innerWidth, innerHeight);
   if (!runtime || !animation || !atlas.complete) { requestAnimationFrame(draw); return; }
-  scheduleRoutines(now);
   if (currentRequest && now >= currentEndsAt) finishAction();
+  scheduleBackground();
   const index = frameAtTime(animation.frames, now - animationStarted, animation.loop);
   const frame = animation.frames[index];
   const scale = runtime.settings.scale;
@@ -165,22 +173,41 @@ canvas.addEventListener("pointerup", (event) => {
   if (!dragging) return;
   dragging = false; canvas.releasePointerCapture(event.pointerId); void window.everby.savePetPosition(x, y);
   const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
-  currentRequest = null;
+  settleCurrentActivity(); currentRequest = null;
   if (moved < 8) { requestClickAction(); void window.everby.openChat(); } else finishAction();
 });
 
 async function applyRuntime(next: PetRuntime): Promise<void> {
+  const previous = runtime;
+  const petChanged = !previous || previous.id !== next.id || previous.sheetUrl !== next.sheetUrl;
+  const modeChanged = previous?.actionMode.mode !== next.actionMode.mode;
+  const currentStillAvailable = !animation || next.animations.some((item) => item.id === animation.id);
   runtime = next; x = runtime.settings.x ?? innerWidth - 240; y = runtime.settings.y ?? innerHeight - 230;
-  atlas = new Image(); atlas.crossOrigin = "anonymous"; atlas.src = runtime.sheetUrl; await atlas.decode();
-  const offscreen = document.createElement("canvas"); offscreen.width = atlas.naturalWidth; offscreen.height = atlas.naturalHeight;
-  const offscreenContext = offscreen.getContext("2d", { willReadFrequently: true })!; offscreenContext.drawImage(atlas, 0, 0);
-  atlasAlpha = offscreenContext.getImageData(0, 0, offscreen.width, offscreen.height).data; atlasWidth = offscreen.width;
-  pendingActions = []; routineSchedule.clear(); lastRoutineCheck = 0; showIdle();
+  if (petChanged) {
+    atlas = new Image(); atlas.crossOrigin = "anonymous"; atlas.src = runtime.sheetUrl; await atlas.decode();
+    const offscreen = document.createElement("canvas"); offscreen.width = atlas.naturalWidth; offscreen.height = atlas.naturalHeight;
+    const offscreenContext = offscreen.getContext("2d", { willReadFrequently: true })!; offscreenContext.drawImage(atlas, 0, 0);
+    atlasAlpha = offscreenContext.getImageData(0, 0, offscreen.width, offscreen.height).data; atlasWidth = offscreen.width;
+  }
+  const profile = runtime.actionProfiles.find((item) => item.mode === runtime.actionMode.mode) ?? runtime.actionProfiles[0];
+  if (petChanged) directorState = createDirectorState(Date.now());
+  if (modeChanged && profile) directorState = switchDirectorMode(directorState, runtime.actionMode.mode, profile, Date.now());
+  if (petChanged || !currentStillAvailable || (modeChanged && currentRequest?.source !== "drag")) {
+    settleCurrentActivity(); pendingActions = []; showIdle();
+  }
+  document.documentElement.dataset.actionMode = runtime.actionMode.mode;
   document.documentElement.dataset.appReady = "true";
 }
 
 window.everby.onRuntime((next) => void applyRuntime(next));
-window.everby.onPetAction(requestAction);
+window.everby.onPetAction((value: PetActionInput) => {
+  if (typeof value !== "string" && value.type === "event") requestEvent(value);
+  else requestAction(value as PetActionRequest | string);
+});
+window.everby.onPetPresence((presence) => {
+  if (locked && !presence.locked) directorState = { ...createDirectorState(Date.now()), mode: runtime?.actionMode.mode ?? "normal" };
+  locked = presence.locked;
+});
 window.everby.onPetSpeech((message) => { speechBubble.textContent = message; speechBubble.classList.add("visible"); setTimeout(() => speechBubble.classList.remove("visible"), 12_000); });
 window.addEventListener("resize", resize);
 resize(); void window.everby.getPetRuntime().then(applyRuntime); requestAnimationFrame(draw);

@@ -8,10 +8,12 @@ import {
   type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle
 } from "electron";
 import { createCodexRuntime } from "../src/core/codex-atlas";
-import { chooseAnimation } from "../src/core/behavior";
+import { automaticModeForIntent } from "../src/core/action-director";
+import { actionModeSchema, actionProfilePatchSchema, startActionModeSchema } from "../src/core/action-profile-schema";
+import { defaultActionProfiles } from "../src/core/action-profiles";
+import { DAILY_DEFAULT_ACTION_RULES } from "../src/core/default-action-rules";
 import { createActionRuleSchema, updateActionRuleSchema } from "../src/core/action-rule-schema";
-import { selectEventRule, type ActionRuleEventInput } from "../src/core/action-rules";
-import { ACTION_INTENTS, type ActionIntent, type AgentSnapshot, type AppSettings, type AppSnapshot, type ChatDelta, type MotionCatalog, type PetActionRequest, type PetActionSource, type PetRuntime, type PetSummary } from "../src/shared/contracts";
+import { ACTION_INTENTS, type ActionIntent, type ActionModeSession, type AgentSnapshot, type AppSettings, type AppSnapshot, type ChatDelta, type MotionCatalog, type PetActionRequest, type PetActionSignal, type PetActionSource, type PetRuntime, type PetSummary } from "../src/shared/contracts";
 import { AppDatabase } from "./services/database";
 import { migrateSoulDeskUserData } from "./services/brand-migration";
 import { MotionService } from "./services/motion-service";
@@ -27,6 +29,7 @@ protocol.registerSchemesAsPrivileged([
 const e2eUserData = process.env.EVERBY_E2E_USER_DATA || process.env.SOULDESK_E2E_USER_DATA;
 const isE2E = process.env.EVERBY_E2E === "1" || process.env.SOULDESK_E2E === "1";
 if (isE2E && e2eUserData) app.setPath("userData", resolve(e2eUserData));
+app.setAppUserModelId("app.everby.companion");
 
 let database: AppDatabase;
 let motionService: MotionService;
@@ -37,6 +40,7 @@ let managerWindow: BrowserWindow | null = null;
 let petWindow: BrowserWindow | null = null;
 let chatWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let actionModeTimer: ReturnType<typeof setTimeout> | null = null;
 let currentAppName = "";
 const requests = new Map<string, AbortController>();
 let petCatalog: CatalogPet[] = [];
@@ -48,6 +52,10 @@ let agentSnapshot: AgentSnapshot = {
 
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const preload = join(__dirname, "../preload/preload.js");
+
+function appIconPath(): string {
+  return app.isPackaged ? join(process.resourcesPath, "app-icon.png") : join(app.getAppPath(), "build/icon.png");
+}
 
 function load(window: BrowserWindow, page: "manager" | "pet" | "chat"): void {
   if (rendererUrl) void window.loadURL(`${rendererUrl}/${page}.html`);
@@ -94,7 +102,7 @@ function createManagerWindow(): BrowserWindow {
   if (managerWindow) { managerWindow.show(); managerWindow.focus(); return managerWindow; }
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 900, minHeight: 620, title: "Everby",
-    backgroundColor: "#fffaf0", show: false,
+    backgroundColor: "#fffaf0", show: false, icon: appIconPath(),
     webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
   window.setMenuBarVisibility(false);
@@ -182,7 +190,7 @@ async function runtimePayload(): Promise<PetRuntime> {
     description: pet.description,
     sheetUrl: petSheetUrl(pet),
     settings: database.getSettings(),
-    actionRules: database.listActionRules(pet.id)
+    actionRules: database.listActionRules(pet.id), actionProfiles: database.listActionProfiles(pet.id), actionMode: database.getActionMode(pet.id)
   });
   if (pet.id === "daily" && pet.source === "bundled") {
     runtime.animations.push({
@@ -213,7 +221,7 @@ async function reconcileMotionPackTargets(): Promise<void> {
 
 async function motionCatalog(): Promise<MotionCatalog> {
   const pet = activePet();
-  const base = createCodexRuntime({ id: pet.id, name: pet.name, description: pet.description, sheetUrl: petSheetUrl(pet), settings: database.getSettings() });
+  const base = createCodexRuntime({ id: pet.id, name: pet.name, description: pet.description, sheetUrl: petSheetUrl(pet), settings: database.getSettings(), actionProfiles: database.listActionProfiles(pet.id), actionMode: database.getActionMode(pet.id) });
   if (pet.id === "daily" && pet.source === "bundled") {
     base.animations.push({
       id: "drag", label: "拖动", loop: true, weight: 1, intents: [], source: "base", enabled: true,
@@ -232,7 +240,8 @@ function snapshot(): AppSnapshot {
   const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item) }));
   return {
     activePetId: pet.id, pets, persona: agentSnapshot.persona, model: database.getModel(), embedding: database.getEmbedding(), settings: database.getSettings(),
-    messages: agentSnapshot.messages, memorySummary: agentSnapshot.memorySummary, motionPacks: database.listMotionPacks(pet.id), actionRules: database.listActionRules(pet.id), todos: agentSnapshot.todos,
+    messages: agentSnapshot.messages, memorySummary: agentSnapshot.memorySummary, motionPacks: database.listMotionPacks(pet.id), actionRules: database.listActionRules(pet.id),
+    actionProfiles: database.listActionProfiles(pet.id), actionMode: database.getActionMode(pet.id), todos: agentSnapshot.todos,
     memories: agentSnapshot.memories, agentCapabilities: agentSnapshot.agentCapabilities, agentStatus: agentSnapshot.agentStatus,
     embeddingStatus: agentSnapshot.embeddingStatus
   };
@@ -263,19 +272,17 @@ function validIntent(value: unknown): ActionIntent {
   return typeof value === "string" && ACTION_INTENTS.includes(value as ActionIntent) ? value as ActionIntent : "idle";
 }
 
-async function dispatchActionIntent(intentValue: unknown, source: PetActionSource, event?: ActionRuleEventInput): Promise<void> {
-  const runtime = await runtimePayload();
-  const now = Date.now();
+async function dispatchActionIntent(intentValue: unknown, source: PetActionSource, event: PetActionSignal["event"] = "conversation_intent"): Promise<void> {
   const intent = validIntent(intentValue);
-  const rule = event ? selectEventRule(runtime.actionRules, event, new Set(runtime.animations.map((animation) => animation.id)), now) : null;
-  if (rule) database.recordActionRuleTrigger(runtime.id, rule.id, now);
-  sendAll("pet:action", {
-    actionId: rule?.actionId ?? chooseAnimation(intent, runtime.animations), source,
-    priority: source === "reminder" || source === "conversation" ? 70 : source === "preview" ? 80 : 50,
-    durationSeconds: rule?.durationSeconds ?? 8,
-    ruleId: rule?.id,
-    triggeredAt: rule ? now : undefined
-  } satisfies PetActionRequest);
+  const petId = database.getActivePetId();
+  const mode = database.getActionMode(petId);
+  const automaticMode = source === "conversation" ? automaticModeForIntent(mode.mode, intent) : null;
+  if (automaticMode) {
+    await setActionMode(automaticMode.mode, automaticMode.durationMinutes, "conversation");
+    return;
+  }
+  const signalSource = source === "pet_click" || source === "conversation" || source === "reminder" ? source : "system";
+  sendAll("pet:action", { type: "event", event, intent, source: signalSource } satisfies PetActionSignal);
 }
 
 function broadcastSnapshot(): void {
@@ -296,29 +303,91 @@ async function runChat(requestId: string, content: string): Promise<void> {
   const emit = (delta: ChatDelta) => sendAll("chat:delta", delta);
   try {
     if (!database.getModel().configured) throw new Error("请先在模型设置中配置 API");
-    sendAll("pet:action", { actionId: "review", source: "conversation", priority: 70, durationSeconds: 45 } satisfies PetActionRequest);
+    await dispatchActionIntent("think", "conversation");
     const result = await agent.streamReply({ petId, content, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
     if (!result.content.trim()) throw new Error("模型没有返回文字");
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
     emit({ requestId, delta: "", done: true });
     await refreshAgentSnapshot(); broadcastSnapshot();
-    await dispatchActionIntent(result.actionIntent, "conversation", { event: "conversation_intent", intent: validIntent(result.actionIntent) });
+    await dispatchActionIntent(result.actionIntent, "conversation");
   } catch (error) {
     const message = error instanceof Error && error.name === "AbortError" ? "已停止生成" : error instanceof Error ? error.message : "对话失败";
     emit({ requestId, delta: "", done: true, error: message });
-    sendAll("pet:action", { actionId: "idle", source: "conversation", priority: 70, durationSeconds: 1 } satisfies PetActionRequest);
+    await dispatchActionIntent("confused", "conversation");
   } finally { clearTimeout(timeout); requests.delete(requestId); }
 }
 
-async function installMotion(path: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
+async function installMotionForPet(path: string, petId: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
   const baseIds = new Set(["idle", "run-right", "run-left", "wave", "jump", "failed", "stretch", "working", "review"]);
-  const pet = activePet();
-  if (pet.id === "daily" && pet.source === "bundled") baseIds.add("drag");
-  const installed = await motionService.install(path, baseIds, activePet().id);
+  if (petId === "daily") baseIds.add("drag");
+  const installed = await motionService.install(path, baseIds, petId);
   const summary = { packId: installed.manifest.packId, version: installed.manifest.version, name: installed.manifest.name, targetPetId: installed.manifest.targetPetId, enabled: true, animationCount: installed.manifest.animations.length };
   database.saveMotionPack(summary, installed.path);
+  return summary;
+}
+
+async function installMotion(path: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
+  const summary = await installMotionForPet(path, activePet().id);
   await broadcast();
   return summary;
+}
+
+async function initializeActionSystem(): Promise<void> {
+  if (!database.listMotionPacks("daily").some((pack) => pack.packId === "daily-routines")) {
+    const archive = app.isPackaged
+      ? join(process.resourcesPath, "motion-examples", "daily-routines.soulmotion")
+      : join(app.getAppPath(), "examples/motions/daily-routines.soulmotion");
+    await installMotionForPet(archive, "daily");
+  }
+  for (const petId of new Set(["daily", database.getActivePetId()])) {
+    database.migrateActionSystemV3(petId, DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles(petId));
+  }
+  scheduleActionModeExpiry(database.getActionMode(database.getActivePetId()));
+}
+
+function refreshTrayMenu(): void {
+  if (!tray) return;
+  const mode = database.getActionMode(database.getActivePetId());
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "打开对话", click: openChat },
+    { label: "设置", click: () => createManagerWindow() },
+    { type: "separator" },
+    { label: "专注模式", submenu: [25, 45, 60].map((minutes) => ({ label: `${minutes} 分钟`, click: () => void setActionMode("focus", minutes, "manual") })) },
+    { label: "休息模式", submenu: [5, 10, 15].map((minutes) => ({ label: `${minutes} 分钟`, click: () => void setActionMode("rest", minutes, "manual") })) },
+    { label: "结束当前模式", enabled: mode.mode !== "normal", click: () => void stopActionMode() },
+    { type: "separator" },
+    { label: "退出 Everby", click: () => app.quit() }
+  ]));
+}
+
+function scheduleActionModeExpiry(session: ActionModeSession): void {
+  if (actionModeTimer) clearTimeout(actionModeTimer);
+  actionModeTimer = null;
+  if (session.endsAt === null) return;
+  actionModeTimer = setTimeout(() => {
+    database.stopActionMode(session.petId);
+    sendAll("pet:speech", "计时结束，回到常态陪伴。");
+    refreshTrayMenu();
+    void broadcast();
+  }, Math.max(1, session.endsAt - Date.now()));
+}
+
+async function setActionMode(mode: "focus" | "rest", durationMinutes: number, source: "manual" | "conversation"): Promise<ActionModeSession> {
+  const session = database.startActionMode(database.getActivePetId(), mode, durationMinutes, source);
+  scheduleActionModeExpiry(session);
+  sendAll("pet:speech", mode === "focus" ? `进入专注模式，陪你工作 ${durationMinutes} 分钟。` : `进入休息模式，先放松 ${durationMinutes} 分钟。`);
+  refreshTrayMenu();
+  await broadcast();
+  return session;
+}
+
+async function stopActionMode(): Promise<ActionModeSession> {
+  const session = database.stopActionMode(database.getActivePetId());
+  scheduleActionModeExpiry(session);
+  sendAll("pet:speech", "已回到常态陪伴。");
+  refreshTrayMenu();
+  await broadcast();
+  return session;
 }
 
 function registerIpc(): void {
@@ -330,8 +399,10 @@ function registerIpc(): void {
     if (!petCatalog.some((pet) => pet.id === id)) throw new Error("角色不存在或资源不可用");
     for (const controller of requests.values()) controller.abort();
     database.setActivePetId(id);
+    database.migrateActionSystemV3(id, DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles(id));
     await configureAgent();
-    sendAll("pet:action", { actionId: "idle", source: "system", priority: 50, durationSeconds: 8 } satisfies PetActionRequest);
+    scheduleActionModeExpiry(database.getActionMode(id));
+    refreshTrayMenu();
     await broadcast();
   });
   ipcMain.handle("window:open-chat", (event) => { trusted(event); openChat(); });
@@ -363,7 +434,7 @@ function registerIpc(): void {
   ipcMain.handle("motion:preview", async (event, actionId: unknown) => {
     trusted(event); const id = actionIdSchema.parse(actionId); const runtime = await runtimePayload();
     if (!runtime.animations.some((animation) => animation.id === id)) throw new Error("动作当前不可用");
-    sendAll("pet:action", { actionId: id, source: "preview", priority: 80, durationSeconds: 8 } satisfies PetActionRequest);
+    sendAll("pet:action", { actionId: id, source: "preview", priority: 90, durationSeconds: 8 } satisfies PetActionRequest);
   });
   ipcMain.handle("action-rule:create", async (event, input: unknown) => {
     trusted(event); const value = createActionRuleSchema.parse(input); const catalog = await motionCatalog();
@@ -380,6 +451,14 @@ function registerIpc(): void {
     trusted(event); if (typeof triggeredAt !== "number" || !Number.isSafeInteger(triggeredAt) || triggeredAt < 0) throw new Error("触发时间无效");
     database.recordActionRuleTrigger(database.getActivePetId(), todoIdSchema.parse(id), triggeredAt);
   });
+  ipcMain.handle("action-profile:update", async (event, mode: unknown, patch: unknown) => {
+    trusted(event); const petId = database.getActivePetId(); const selectedMode = actionModeSchema.parse(mode); const value = actionProfilePatchSchema.parse(patch);
+    const profile = database.saveActionProfile({ petId, mode: selectedMode, ...value, updatedAt: Date.now() }); await broadcast(); return profile;
+  });
+  ipcMain.handle("action-mode:start", async (event, input: unknown) => {
+    trusted(event); const value = startActionModeSchema.parse(input); return setActionMode(value.mode, value.durationMinutes, "manual");
+  });
+  ipcMain.handle("action-mode:stop", async (event) => { trusted(event); return stopActionMode(); });
   ipcMain.handle("todo:create", async (event, input: unknown) => { trusted(event); const todo = await agent.createTodo(database.getActivePetId(), todoCreateSchema.parse(input)); await broadcast(); return todo; });
   ipcMain.handle("todo:update", async (event, id: unknown, patch: unknown) => { trusted(event); const todo = await agent.updateTodo(database.getActivePetId(), todoIdSchema.parse(id), todoUpdateSchema.parse(patch)); await broadcast(); return todo; });
   ipcMain.handle("todo:delete", async (event, id: unknown) => { trusted(event); await agent.deleteTodo(database.getActivePetId(), todoIdSchema.parse(id)); await broadcast(); });
@@ -388,19 +467,15 @@ function registerIpc(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(join(bundledPetRoot(), "daily/tray.png"));
+  tray = new Tray(appIconPath());
   tray.setToolTip("Everby");
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "打开对话", click: openChat },
-    { label: "设置", click: () => createManagerWindow() },
-    { type: "separator" },
-    { label: "退出 Everby", click: () => app.quit() }
-  ]));
+  refreshTrayMenu();
   tray.on("click", openChat);
 }
 
 async function initialize(): Promise<void> {
   const userData = app.getPath("userData");
+  if (process.platform === "darwin") app.dock?.setIcon(appIconPath());
   if (!isE2E) migrateSoulDeskUserData(join(app.getPath("appData"), "SoulDesk"), userData);
   agent = new PythonAgentClient({ packaged: app.isPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath });
   database = new AppDatabase(join(userData, "everby.db"));
@@ -417,16 +492,21 @@ async function initialize(): Promise<void> {
   });
   await refreshPetCatalog();
   await configureAgent();
+  await initializeActionSystem();
   agent.onEvent((event) => {
     if (event.type === "pet_action" && !event.requestId && typeof event.data.actionIntent === "string") {
       void dispatchActionIntent(event.data.actionIntent, "system");
     }
     if (event.type === "notification_requested" && typeof event.data.message === "string") {
+      sendAll("pet:speech", event.data.message);
       if (Notification.isSupported()) {
-        const notification = new Notification({ title: "Everby 提醒", body: event.data.message, silent: false });
+        const notification = new Notification({
+          title: typeof event.data.title === "string" ? event.data.title : "Everby 提醒",
+          body: event.data.message, icon: appIconPath(), silent: false, timeoutType: "never"
+        });
         notification.on("click", openChat); notification.show();
       }
-      void dispatchActionIntent("encourage", "reminder", { event: "reminder" });
+      void dispatchActionIntent("encourage", "reminder", "reminder");
     }
     if (["state_changed", "tool_finished"].includes(event.type)) void refreshAgentSnapshot().then(broadcastSnapshot).catch(() => undefined);
   });
@@ -466,10 +546,12 @@ async function initialize(): Promise<void> {
   const resizePetWindow = () => petWindow?.setBounds(desktopBounds());
   screen.on("display-added", resizePetWindow); screen.on("display-removed", resizePetWindow); screen.on("display-metrics-changed", resizePetWindow);
   setInterval(() => {
-    if (!database.getSettings().activeAppEnabled || powerMonitor.getSystemIdleState(60) === "locked") { currentAppName = ""; return; }
+    const idleState = powerMonitor.getSystemIdleState(60);
+    sendAll("pet:presence", { locked: idleState === "locked" });
+    if (!database.getSettings().activeAppEnabled || idleState === "locked") { currentAppName = ""; return; }
     void activeWindow({ accessibilityPermission: false, screenRecordingPermission: false }).then((value) => {
       currentAppName = value?.owner.name === "Everby" ? "" : value?.owner.name ?? "";
-      void agent.call("runtime.presence", { petId: database.getActivePetId(), activeAppName: currentAppName, idleState: powerMonitor.getSystemIdleState(60), settings: database.getSettings() }).catch(() => undefined);
+      void agent.call("runtime.presence", { petId: database.getActivePetId(), activeAppName: currentAppName, idleState, settings: database.getSettings() }).catch(() => undefined);
     }).catch(() => { currentAppName = ""; });
   }, 15_000).unref();
 }

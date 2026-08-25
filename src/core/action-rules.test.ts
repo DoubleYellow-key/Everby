@@ -1,32 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ActionRule } from "../shared/contracts";
-import { isRoutineRuleActive, nextRoutineTriggerAt, selectEventRule } from "./action-rules";
+import { selectEventRule } from "./action-rules";
 
-function routine(overrides: Partial<ActionRule> = {}): ActionRule {
+function eventRule(overrides: Partial<ActionRule> = {}): ActionRule {
   return {
-    id: "routine-1", petId: "daily", name: "Evening stretch", actionId: "stretch", enabled: true,
-    durationSeconds: 8, trigger: { type: "routine", weekdays: [1, 2, 3, 4, 5], startTime: "22:00", endTime: "02:00", minIntervalMinutes: 10, maxIntervalMinutes: 20, probability: 1 },
+    id: "event-1", petId: "daily", name: "Click stretch", actionId: "stretch", enabled: true,
+    durationSeconds: 8, trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 0 },
     createdAt: Date.parse("2026-08-24T12:00:00Z"), updatedAt: Date.parse("2026-08-24T12:00:00Z"), lastTriggeredAt: null,
     ...overrides
   };
 }
 
-describe("action routine rules", () => {
-  it("treats the after-midnight part of an overnight window as the previous weekday", () => {
-    const rule = routine();
-    expect(isRoutineRuleActive(rule, new Date("2026-08-25T01:00:00"))).toBe(true);
-    expect(isRoutineRuleActive(rule, new Date("2026-08-24T03:00:00"))).toBe(false);
-  });
-
-  it("calculates the next trigger from the last persisted trigger within the configured range", () => {
-    const rule = routine({ lastTriggeredAt: 1_000 });
-    expect(nextRoutineTriggerAt(rule, () => 0)).toBe(1_000 + 10 * 60_000);
-    expect(nextRoutineTriggerAt(rule, () => 1)).toBe(1_000 + 20 * 60_000);
-  });
-});
-
 describe("event action rules", () => {
-  const base = routine({
+  const base = eventRule({
     id: "event-1", actionId: "wave", updatedAt: 100,
     trigger: { type: "event", event: "conversation_intent", intent: "greet", probability: 1, cooldownSeconds: 60 }
   });

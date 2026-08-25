@@ -133,7 +133,15 @@ class AgentRepository:
         row = self.db.execute("SELECT * FROM agent_todos WHERE pet_id=? AND normalized_title=? AND completed_at IS NULL", (pet_id, normalized)).fetchone()
         now = _now_ms()
         if row:
-            result = self._todo(row)
+            self.db.execute(
+                """UPDATE agent_todos SET
+                   notes=CASE WHEN notes='' THEN ? ELSE notes END,
+                   due_at=COALESCE(due_at,?), remind_at=COALESCE(remind_at,?),
+                   repeat_rule=CASE WHEN repeat_rule='none' THEN ? ELSE repeat_rule END,
+                   updated_at=? WHERE id=?""",
+                (notes.strip()[:500], due_at, remind_at, repeat, now, row["id"]),
+            )
+            result = self.todo_by_id(pet_id, row["id"])
         else:
             todo_id = str(uuid.uuid4())
             self.db.execute("INSERT INTO agent_todos(id,pet_id,title,normalized_title,notes,due_at,remind_at,repeat_rule,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",

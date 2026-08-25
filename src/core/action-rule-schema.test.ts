@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createActionRuleSchema } from "./action-rule-schema";
 
 describe("action rule input", () => {
-  it("accepts a bounded overnight routine", () => {
+  it("accepts a bounded reminder event", () => {
     expect(createActionRuleSchema.parse({
-      name: "Night stretch", actionId: "stretch", enabled: true, durationSeconds: 8,
-      trigger: { type: "routine", weekdays: [0, 6], startTime: "22:00", endTime: "02:00", minIntervalMinutes: 10, maxIntervalMinutes: 20, probability: 0.5 }
-    }).trigger.type).toBe("routine");
+      name: "Reminder stretch", actionId: "stretch", enabled: true, durationSeconds: 8,
+      trigger: { type: "event", event: "reminder", cooldownSeconds: 30, probability: 0.5 }
+    }).trigger.type).toBe("event");
   });
 
-  it("rejects empty weekdays and inverted interval ranges", () => {
+  it("rejects removed routine schedules", () => {
     const input = {
       name: "Invalid", actionId: "idle", enabled: true, durationSeconds: 8,
       trigger: { type: "routine", weekdays: [], startTime: "08:00", endTime: "18:00", minIntervalMinutes: 30, maxIntervalMinutes: 10, probability: 1 }
