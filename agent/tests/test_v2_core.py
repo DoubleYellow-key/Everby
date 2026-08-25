@@ -2,6 +2,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -55,6 +56,17 @@ class AgentRepositoryTests(unittest.TestCase):
         enriched = self.repo.create_todo("daily", "完成小程序新需求", due_at=1_800_000_000_000)
         self.assertEqual(first["id"], enriched["id"])
         self.assertEqual(enriched["dueAt"], 1_800_000_000_000)
+
+    def test_todos_with_the_same_timestamp_keep_newest_first_order(self):
+        with patch("everby_agent.persistence.database._now_ms", return_value=1_000):
+            self.repo.create_todo("daily", "First")
+            self.repo.create_todo("daily", "Second")
+        self.assertEqual([item["title"] for item in self.repo.list_todos("daily")], ["Second", "First"])
+
+    def test_messages_with_the_same_timestamp_keep_conversation_order(self):
+        self.repo.add_message("daily", "user", "First", created_at=1_000)
+        self.repo.add_message("daily", "assistant", "Second", created_at=1_000)
+        self.assertEqual([item["content"] for item in self.repo.list_messages("daily")], ["First", "Second"])
 
     def test_hybrid_memory_search_uses_fts_and_vector_results(self):
         self.repo.remember("daily", "preference", "The user likes jasmine tea", vector=[1.0, 0.0], confidence=0.9)

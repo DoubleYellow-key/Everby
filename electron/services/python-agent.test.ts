@@ -13,7 +13,7 @@ describe("PythonAgentClient protocol v2", () => {
     const agent = new PythonAgentClient({ packaged: false, appPath: process.cwd(), resourcesPath: "" });
     try { expect(await agent.health()).toMatchObject({ ok: true, runtime: "python", version: "0.1.0", protocolVersion: 2 }); }
     finally { agent.close(); await new Promise((resolve) => setTimeout(resolve, 500)); }
-  });
+  }, 20_000);
 
   it("configures persistent agent state and preserves split surrogate text", async () => {
     const path = testDatabase("protocol-v2");

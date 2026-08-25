@@ -101,13 +101,13 @@ class AgentRepository:
         item = {"id": message_id or str(uuid.uuid4()), "role": role, "content": content, "createdAt": created_at or _now_ms()}
         self.db.execute("INSERT OR REPLACE INTO agent_messages(id,pet_id,epoch,role,content,created_at) VALUES(?,?,?,?,?,?)",
                         (item["id"], pet_id, self.epoch(pet_id), role, content, item["createdAt"]))
-        self.db.execute("DELETE FROM agent_messages WHERE pet_id=? AND epoch=? AND id NOT IN (SELECT id FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC LIMIT 200)",
+        self.db.execute("DELETE FROM agent_messages WHERE pet_id=? AND epoch=? AND id NOT IN (SELECT id FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC, rowid DESC LIMIT 200)",
                         (pet_id, self.epoch(pet_id), pet_id, self.epoch(pet_id)))
         self.db.commit()
         return item
 
     def list_messages(self, pet_id: str, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self.db.execute("SELECT id,role,content,created_at AS createdAt FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC LIMIT ?",
+        rows = self.db.execute("SELECT id,role,content,created_at AS createdAt FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC, rowid DESC LIMIT ?",
                                (pet_id, self.epoch(pet_id), limit)).fetchall()
         return [dict(row) for row in reversed(rows)]
 
@@ -164,7 +164,7 @@ class AgentRepository:
         return self._todo(row)
 
     def list_todos(self, pet_id: str) -> list[dict[str, Any]]:
-        return [self._todo(row) for row in self.db.execute("SELECT * FROM agent_todos WHERE pet_id=? ORDER BY completed_at IS NOT NULL, COALESCE(remind_at,due_at,9223372036854775807),created_at DESC", (pet_id,))]
+        return [self._todo(row) for row in self.db.execute("SELECT * FROM agent_todos WHERE pet_id=? ORDER BY completed_at IS NOT NULL, COALESCE(remind_at,due_at,9223372036854775807), created_at DESC, rowid DESC", (pet_id,))]
 
     def update_todo(self, pet_id: str, todo_id: str, **patch: Any) -> dict[str, Any]:
         current = self.todo_by_id(pet_id, todo_id)
