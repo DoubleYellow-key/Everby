@@ -5,7 +5,7 @@ root = Path(SPECPATH)
 datas = []
 binaries = []
 hiddenimports = []
-for package in ("langchain", "langchain_core", "langchain_openai", "langgraph", "aiosqlite", "sqlite_vec"):
+for package in ("langchain", "langchain_core", "langchain_openai", "langgraph", "aiosqlite", "sqlite_vec", "tzdata"):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
     binaries += package_binaries
