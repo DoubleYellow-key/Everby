@@ -1,7 +1,5 @@
 import asyncio
 import os
-import sqlite3
-import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,38 +10,11 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .graph.companion import CompanionGraph
 from .persistence.database import AgentRepository
-from .workflows import AgentScheduler, MemoryCurator, compose_reminder_copy
+from .persistence.migration import backup_legacy_database, migrate_legacy_data
+from .workflows import AgentScheduler, MemoryCurator, compose_presence_copy, compose_reminder_copy
 
 os.environ.setdefault("LANGSMITH_TRACING", "false")
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
-
-
-def backup_and_reset_legacy(path: Path) -> Path | None:
-    if not path.exists() or path.stat().st_size == 0:
-        return None
-    source = sqlite3.connect(path)
-    try:
-        tables = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "agent_meta" in tables:
-            marker = source.execute("SELECT value FROM agent_meta WHERE key='protocol_version'").fetchone()
-            if marker and marker[0] == "2":
-                return None
-        backup = path.with_name(f"{path.stem}-pre-v2-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}.bak")
-        destination = sqlite3.connect(backup)
-        try:
-            source.backup(destination)
-        finally:
-            destination.close()
-        if "messages" in tables:
-            source.execute("DELETE FROM messages")
-        if "todos" in tables:
-            source.execute("DELETE FROM todos")
-        if "kv" in tables:
-            source.execute("DELETE FROM kv WHERE key LIKE 'persona:%' OR key LIKE 'memory:%'")
-        source.commit()
-        return backup
-    finally:
-        source.close()
 
 
 class AgentRuntime:
@@ -72,10 +43,11 @@ class AgentRuntime:
         if self.repository and self.repository.path != db_path:
             await self.close()
         self.emit("agent_progress", {"node": "configure_backup"}, None)
-        backup = backup_and_reset_legacy(db_path)
+        backup = backup_legacy_database(db_path)
         self.emit("agent_progress", {"node": "configure_database"}, None)
         if self.repository is None:
             self.repository = AgentRepository(db_path)
+            migrate_legacy_data(self.repository)
             self.repository.db.execute("INSERT INTO agent_meta(key,value) VALUES('protocol_version','2') ON CONFLICT(key) DO UPDATE SET value='2'")
             self.repository.db.commit()
         self.active_pet_id = str(params.get("petId") or "daily")[:100]
@@ -88,19 +60,29 @@ class AgentRuntime:
         self.embeddings = self._embeddings(embedding) if embedding.get("apiKey") and embedding.get("model") else None
         if self.chat_model and self.checkpointer is None:
             self.emit("agent_progress", {"node": "configure_checkpoint"}, None)
-            self.checkpoint_connection = await aiosqlite.connect(db_path)
+            checkpoint_path = db_path.with_name(f"{db_path.stem}-checkpoints{db_path.suffix or '.db'}")
+            self.checkpoint_connection = await aiosqlite.connect(checkpoint_path)
             self.checkpointer = AsyncSqliteSaver(self.checkpoint_connection, serde=JsonPlusSerializer(pickle_fallback=False))
             await self.checkpointer.setup()
         self.capabilities = {"streaming": bool(self.chat_model), "toolCalling": False, "embedding": bool(self.embeddings)}
         self.status = "ready" if self.chat_model else "unconfigured"
+        if self.chat_model:
+            try:
+                await asyncio.wait_for(self.probe(), timeout=12)
+            except Exception:
+                self.capabilities = {"streaming": True, "toolCalling": False, "embedding": False}
+                self.status = "degraded"
         if self.scheduler is None:
-            self.scheduler = AgentScheduler(self.require_repository(), self.emit, self._compose_reminder)
+            self.scheduler = AgentScheduler(self.require_repository(), self.emit, self._compose_reminder, self._compose_presence)
             self.scheduler.start()
         if self.chat_model:
             if self.curator:
                 await self.curator.close()
             self.curator = MemoryCurator(self.require_repository(), self.chat_model,
                                          self.embeddings.embed_query if self.embeddings else None, self.emit)
+        elif self.curator:
+            await self.curator.close()
+            self.curator = None
         self._rebuild_graph()
         self.emit("agent_progress", {"node": "configure_done"}, None)
         return {"ok": True, "backupPath": str(backup) if backup else None, "capabilities": self.capabilities, "status": self.status}
@@ -138,27 +120,48 @@ class AgentRuntime:
         )
         return await compose_reminder_copy(self.chat_model, persona, todos)
 
+    async def _compose_presence(self, kind: str, pet_id: str, context: dict[str, Any]) -> str | None:
+        if not self.chat_model or self.tasks:
+            return None
+        persona = self.require_repository().get_persona(
+            pet_id,
+            self.active_pet_name if pet_id == self.active_pet_id else pet_id,
+            self.active_pet_description if pet_id == self.active_pet_id else "",
+        )
+        return await compose_presence_copy(self.chat_model, persona, kind, context)
+
     async def probe(self) -> dict[str, Any]:
         if not self.chat_model:
             self.capabilities = {"streaming": False, "toolCalling": False, "embedding": False}
             return self.capabilities
-        streaming = tool_calling = embedding = False
-        try:
-            async for chunk in self.chat_model.astream("Reply with OK"):
-                streaming = streaming or bool(chunk.content)
-        except Exception:
-            pass
-        try:
-            probe_tool = {"type": "function", "function": {"name": "capability_probe", "description": "Capability probe", "parameters": {"type": "object", "properties": {}}}}
-            response = await self.chat_model.bind_tools([probe_tool], tool_choice="capability_probe").ainvoke("Run the capability probe")
-            tool_calling = bool(response.tool_calls)
-        except Exception:
-            pass
-        if self.embeddings:
+        async def probe_streaming() -> bool:
             try:
-                embedding = bool(await self.embeddings.aembed_query("capability probe"))
+                async for chunk in self.chat_model.astream("Reply with OK"):
+                    if chunk.content:
+                        return True
             except Exception:
-                pass
+                return False
+            return False
+
+        async def probe_tools() -> bool:
+            try:
+                probe_tool = {"type": "function", "function": {"name": "capability_probe", "description": "Capability probe", "parameters": {"type": "object", "properties": {}}}}
+                response = await self.chat_model.bind_tools([probe_tool], tool_choice="capability_probe").ainvoke("Run the capability probe")
+                return bool(response.tool_calls)
+            except Exception:
+                return False
+
+        async def probe_embedding() -> bool:
+            if not self.embeddings:
+                return False
+            try:
+                return bool(await self.embeddings.aembed_query("capability probe"))
+            except Exception:
+                return False
+
+        streaming, tool_calling, embedding = await asyncio.gather(
+            probe_streaming(), probe_tools(), probe_embedding(),
+        )
         self.capabilities = {"streaming": streaming, "toolCalling": tool_calling, "embedding": embedding}
         self.status = "ready" if streaming else "degraded"
         self._rebuild_graph()
@@ -178,7 +181,8 @@ class AgentRuntime:
         try:
             result = await task
             reply = result.get("reply", "")
-            self.emit("assistant_delta", {"delta": reply}, request_id)
+            if result.get("streamed_text", "") != reply:
+                self.emit("assistant_delta", {"delta": reply}, request_id)
             self.emit("pet_action", {"actionIntent": result.get("action_intent", "idle")}, request_id)
             self.emit("assistant_done", {"content": reply, "capabilities": self.capabilities}, request_id)
             if self.curator and self.capabilities.get("toolCalling"):
@@ -209,7 +213,8 @@ class AgentRuntime:
     def update_presence(self, params: dict[str, Any]) -> None:
         if self.scheduler:
             self.scheduler.update_presence(str(params.get("petId") or self.active_pet_id),
-                                           dict(params.get("settings") or {}), str(params.get("idleState") or "active"))
+                                           dict(params.get("settings") or {}), str(params.get("idleState") or "active"),
+                                           str(params.get("activeAppName") or ""))
 
     async def close(self) -> None:
         for task in self.tasks.values():

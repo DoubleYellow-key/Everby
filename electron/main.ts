@@ -508,6 +508,10 @@ async function initialize(): Promise<void> {
       }
       void dispatchActionIntent("encourage", "reminder", "reminder");
     }
+    if (event.type === "companion_message" && typeof event.data.message === "string") {
+      sendAll("pet:speech", event.data.message);
+      void dispatchActionIntent(event.data.kind === "task_review" ? "encourage" : "greet", "system");
+    }
     if (["state_changed", "tool_finished"].includes(event.type)) void refreshAgentSnapshot().then(broadcastSnapshot).catch(() => undefined);
   });
 
@@ -547,12 +551,20 @@ async function initialize(): Promise<void> {
   screen.on("display-added", resizePetWindow); screen.on("display-removed", resizePetWindow); screen.on("display-metrics-changed", resizePetWindow);
   setInterval(() => {
     const idleState = powerMonitor.getSystemIdleState(60);
+    const settings = database.getSettings();
     sendAll("pet:presence", { locked: idleState === "locked" });
-    if (!database.getSettings().activeAppEnabled || idleState === "locked") { currentAppName = ""; return; }
+    const updateAgentPresence = () => void agent.call("runtime.presence", {
+      petId: database.getActivePetId(), activeAppName: currentAppName, idleState, settings
+    }).catch(() => undefined);
+    if (!settings.activeAppEnabled || idleState === "locked") {
+      currentAppName = "";
+      updateAgentPresence();
+      return;
+    }
     void activeWindow({ accessibilityPermission: false, screenRecordingPermission: false }).then((value) => {
       currentAppName = value?.owner.name === "Everby" ? "" : value?.owner.name ?? "";
-      void agent.call("runtime.presence", { petId: database.getActivePetId(), activeAppName: currentAppName, idleState, settings: database.getSettings() }).catch(() => undefined);
-    }).catch(() => { currentAppName = ""; });
+      updateAgentPresence();
+    }).catch(() => { currentAppName = ""; updateAgentPresence(); });
   }, 15_000).unref();
 }
 

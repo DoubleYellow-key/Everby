@@ -8,7 +8,12 @@ const errorSchema = z.object({ code: z.string(), message: z.string(), retryable:
 const resultSchema = z.object({ protocolVersion: z.literal(2), id: z.string(), result: z.unknown().optional(), error: errorSchema.optional() }).strict();
 const eventSchema = z.object({ protocolVersion: z.literal(2), type: z.string(), requestId: z.string().optional(), data: z.record(z.string(), z.unknown()) }).strict();
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; cleanup?: () => void };
+type Pending = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  cleanup?: () => void;
+  onEvent?: (event: PythonAgentEvent) => void;
+};
 export type PythonAgentEvent = z.infer<typeof eventSchema>;
 export type RuntimeConfiguration = {
   databasePath: string; petId: string; petName: string; petDescription: string; timezone: string;
@@ -48,7 +53,11 @@ export class PythonAgentClient {
     let value: unknown;
     try { value = JSON.parse(line); } catch { return; }
     const event = eventSchema.safeParse(value);
-    if (event.success) { for (const listener of this.listeners) listener(event.data); return; }
+    if (event.success) {
+      if (event.data.requestId) this.pending.get(event.data.requestId)?.onEvent?.(event.data);
+      for (const listener of this.listeners) listener(event.data);
+      return;
+    }
     const result = resultSchema.safeParse(value);
     if (!result.success) return;
     const pending = this.pending.get(result.data.id);
@@ -63,13 +72,14 @@ export class PythonAgentClient {
 
   private failAll(error: Error): void { for (const pending of this.pending.values()) { pending.cleanup?.(); pending.reject(error); } this.pending.clear(); }
 
-  call(method: string, params: unknown = {}, signal?: AbortSignal): Promise<unknown> {
+  call(method: string, params: unknown = {}, signal?: AbortSignal,
+       onEvent?: (event: PythonAgentEvent) => void): Promise<unknown> {
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const abort = () => { void this.call("agent.cancel", { requestId: id }).catch(() => undefined); const pending = this.pending.get(id); if (!pending) return; this.pending.delete(id); pending.cleanup?.(); reject(Object.assign(new Error("已停止生成"), { name: "AbortError" })); };
       if (signal?.aborted) { reject(Object.assign(new Error("已停止生成"), { name: "AbortError" })); return; }
       const cleanup = signal ? () => signal.removeEventListener("abort", abort) : undefined;
-      this.pending.set(id, { resolve, reject, cleanup }); signal?.addEventListener("abort", abort, { once: true });
+      this.pending.set(id, { resolve, reject, cleanup, onEvent }); signal?.addEventListener("abort", abort, { once: true });
       this.ensureStarted().stdin.write(`${JSON.stringify({ id, protocolVersion: 2, method, params })}\n`, (error) => {
         if (!error) return; const pending = this.pending.get(id); if (pending) { this.pending.delete(id); pending.cleanup?.(); reject(error); }
       });
@@ -84,8 +94,9 @@ export class PythonAgentClient {
   async probe(): Promise<AgentCapabilities> { return await this.call("model.probe") as AgentCapabilities; }
   async snapshot(petId: string): Promise<AgentSnapshot> { return await this.call("agent.snapshot", { petId }) as AgentSnapshot; }
   async streamReply(input: { petId: string; content: string; onDelta: (delta: string) => void; signal?: AbortSignal }): Promise<{ content: string; actionIntent: string }> {
-    const off = this.onEvent((event) => { if (event.requestId && event.type === "assistant_delta" && typeof event.data.delta === "string") input.onDelta(event.data.delta); });
-    try { return await this.call("agent.chat", { petId: input.petId, content: input.content }, input.signal) as any; } finally { off(); }
+    return await this.call("agent.chat", { petId: input.petId, content: input.content }, input.signal, (event) => {
+      if (event.type === "assistant_delta" && typeof event.data.delta === "string") input.onDelta(event.data.delta);
+    }) as any;
   }
   async clearConversation(petId: string): Promise<void> { await this.call("conversation.clear", { petId }); }
   async updatePersona(petId: string, patch: Partial<PersonaProfile>): Promise<PersonaProfile> { return await this.call("persona.update", { petId, patch }) as PersonaProfile; }

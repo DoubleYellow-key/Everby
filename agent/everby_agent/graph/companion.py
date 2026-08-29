@@ -4,6 +4,7 @@ from typing import Any, Literal, TypedDict
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
@@ -23,6 +24,56 @@ class CompanionState(TypedDict, total=False):
     reply: str
     action_intent: str
     capabilities: dict[str, bool]
+
+
+class ReplyStreamHandler(AsyncCallbackHandler):
+    _TEXT_TOOL_MARKER = "<|FunctionCallBegin|>"
+
+    def __init__(self, emit: Any, request_id: str):
+        self.emit = emit
+        self.request_id = request_id
+        self.text = ""
+        self.blocked = False
+        self.decided = False
+        self.pending: list[str] = []
+        self.internal_runs: set[Any] = set()
+
+    async def on_chat_model_start(self, _serialized: dict[str, Any], _messages: list[list[Any]],
+                                  *, run_id: Any, metadata: dict[str, Any] | None = None, **_kwargs: Any) -> None:
+        if metadata and metadata.get("lc_source") == "summarization":
+            self.internal_runs.add(run_id)
+
+    async def on_llm_new_token(self, token: str, *, run_id: Any, **_kwargs: Any) -> None:
+        if run_id in self.internal_runs:
+            return
+        if not token or self.blocked:
+            return
+        if not self.decided:
+            self.pending.append(token)
+            candidate = "".join(self.pending).lstrip()
+            if self._TEXT_TOOL_MARKER.startswith(candidate) and len(candidate) < len(self._TEXT_TOOL_MARKER):
+                return
+            if candidate.startswith(self._TEXT_TOOL_MARKER):
+                self.blocked = True
+                self.pending.clear()
+                return
+            self.decided = True
+            for pending_token in self.pending:
+                self._emit_token(pending_token)
+            self.pending.clear()
+            return
+        self._emit_token(token)
+
+    def _emit_token(self, token: str) -> None:
+        self.text += token
+        if self.emit:
+            self.emit("assistant_delta", {"delta": token}, self.request_id)
+
+    async def on_llm_end(self, _response: Any, *, run_id: Any, **_kwargs: Any) -> None:
+        self.internal_runs.discard(run_id)
+
+    async def on_llm_error(self, _error: BaseException, *, run_id: Any, **_kwargs: Any) -> None:
+        self.internal_runs.discard(run_id)
 
 
 def select_action(text: str) -> str:
@@ -170,5 +221,13 @@ class CompanionGraph:
         return {}
 
     async def invoke(self, pet_id: str, run_id: str, user_input: str) -> dict[str, Any]:
-        config = {"configurable": {"thread_id": f"pet:{pet_id}:{self.repository.epoch(pet_id)}"}}
-        return await self.graph.ainvoke({"pet_id": pet_id, "run_id": run_id, "user_input": user_input}, config=config)
+        handler = ReplyStreamHandler(self.emit, run_id)
+        config = {
+            "configurable": {"thread_id": f"pet:{pet_id}:{self.repository.epoch(pet_id)}"},
+            "callbacks": [handler],
+        }
+        result = await self.graph.ainvoke(
+            {"pet_id": pet_id, "run_id": run_id, "user_input": user_input}, config=config,
+        )
+        result["streamed_text"] = "" if handler.blocked else handler.text
+        return result
