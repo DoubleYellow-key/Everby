@@ -48,7 +48,7 @@ class AgentServer:
         if method == "conversation.clear":
             return {"conversationEpoch": repo.clear_conversation(pet_id)}
         if method == "persona.update":
-            return repo.update_persona(pet_id, dict(params.get("patch") or {}))
+            return self._runtime.update_persona(pet_id, dict(params.get("patch") or {}))
         if method == "todo.list":
             return repo.list_todos(pet_id)
         if method == "todo.create":

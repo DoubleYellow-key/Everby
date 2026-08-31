@@ -66,6 +66,9 @@ export interface PersonaProfile {
   boundaries: string;
 }
 
+/** 角色作者在 pet.json 里声明的人设默认值（全部可选）；用户手动修改的人设永远优先于它。 */
+export type PetPersonaDefaults = Partial<Pick<PersonaProfile, "background" | "speakingStyle" | "userAddress" | "boundaries">>;
+
 export interface ModelSettings {
   baseUrl: string;
   model: string;
@@ -234,6 +237,7 @@ export interface PetSummary {
   description: string;
   sheetUrl: string;
   source: "petdex" | "bundled";
+  persona?: PetPersonaDefaults;
 }
 
 export interface MotionPackSummary { packId: string; version: string; name: string; targetPetId: string; enabled: boolean; animationCount: number }

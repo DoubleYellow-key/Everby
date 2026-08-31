@@ -9,7 +9,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .graph.companion import CompanionGraph
-from .persistence.database import AgentRepository
+from .persistence.database import AgentRepository, sanitize_persona_defaults
 from .persistence.migration import backup_legacy_database, migrate_legacy_data
 from .workflows import AgentScheduler, MemoryCurator, compose_presence_copy, compose_reminder_copy
 
@@ -33,6 +33,7 @@ class AgentRuntime:
         self.active_pet_id = "daily"
         self.active_pet_name = "Daily"
         self.active_pet_description = ""
+        self.active_pet_persona: dict[str, str] = {}
         self.timezone = "Asia/Shanghai"
         self.capabilities = {"streaming": False, "toolCalling": False, "embedding": False}
         self.status = "unconfigured"
@@ -57,7 +58,9 @@ class AgentRuntime:
         self.active_pet_id = str(params.get("petId") or "daily")[:100]
         self.active_pet_name = str(params.get("petName") or self.active_pet_id)[:80]
         self.active_pet_description = str(params.get("petDescription") or "")[:2000]
-        self.repository.migrate_legacy_persona_defaults(self.active_pet_id)
+        self.active_pet_persona = sanitize_persona_defaults(params.get("petPersona"))
+        self.repository.migrate_legacy_persona_defaults(self.active_pet_id, self.active_pet_persona,
+                                                        description=self.active_pet_description)
         self.timezone = str(params.get("timezone") or "Asia/Shanghai")[:100]
         chat = params.get("chat") if isinstance(params.get("chat"), dict) else {}
         embedding = params.get("embedding") if isinstance(params.get("embedding"), dict) else {}
@@ -111,7 +114,8 @@ class AgentRuntime:
             self.graph = CompanionGraph(
                 self.repository, self.chat_model, dict(self.capabilities), self.checkpointer, embed,
                 self.timezone, self.emit,
-                {"name": self.active_pet_name, "description": self.active_pet_description},
+                {"name": self.active_pet_name, "description": self.active_pet_description,
+                 "persona": self.active_pet_persona},
             )
         else:
             self.graph = None
@@ -121,24 +125,22 @@ class AgentRuntime:
             raise RuntimeError("runtime.configure must be called first")
         return self.repository
 
+    def _persona_defaults(self, pet_id: str) -> tuple[str, str, dict[str, str]]:
+        """合成人设所需的 (name, description, pet.json persona 默认)；仅当前激活角色有元数据。"""
+        if pet_id == self.active_pet_id:
+            return self.active_pet_name, self.active_pet_description, self.active_pet_persona
+        return pet_id, "", {}
+
     async def _compose_reminder(self, pet_id: str, todos: list[dict[str, Any]]) -> str | None:
         if not self.chat_model or self.tasks:
             return None
-        persona = self.require_repository().get_persona(
-            pet_id,
-            self.active_pet_name if pet_id == self.active_pet_id else pet_id,
-            self.active_pet_description if pet_id == self.active_pet_id else "",
-        )
+        persona = self.require_repository().get_persona(pet_id, *self._persona_defaults(pet_id))
         return await compose_reminder_copy(self.chat_model, persona, todos)
 
     async def _compose_presence(self, kind: str, pet_id: str, context: dict[str, Any]) -> str | None:
         if not self.chat_model or self.tasks:
             return None
-        persona = self.require_repository().get_persona(
-            pet_id,
-            self.active_pet_name if pet_id == self.active_pet_id else pet_id,
-            self.active_pet_description if pet_id == self.active_pet_id else "",
-        )
+        persona = self.require_repository().get_persona(pet_id, *self._persona_defaults(pet_id))
         return await compose_presence_copy(self.chat_model, persona, kind, context)
 
     async def probe(self) -> dict[str, Any]:
@@ -213,13 +215,19 @@ class AgentRuntime:
         repo = self.require_repository()
         pet = pet_id or self.active_pet_id
         memories = repo.list_memories(pet)
-        default_name = self.active_pet_name if pet == self.active_pet_id else pet
-        default_description = self.active_pet_description if pet == self.active_pet_id else ""
-        return {"petId": pet, "persona": repo.get_persona(pet, default_name, default_description), "messages": repo.list_messages(pet),
+        return {"petId": pet, "persona": repo.get_persona(pet, *self._persona_defaults(pet)), "messages": repo.list_messages(pet),
                 "todos": repo.list_todos(pet), "memories": memories,
                 "memorySummary": "\n".join(item["content"] for item in memories[:8]),
                 "agentCapabilities": self.capabilities, "agentStatus": self.status,
                 "embeddingStatus": "ready" if self.capabilities["embedding"] else ("unconfigured" if not self.embeddings else "degraded")}
+
+    def update_persona(self, pet_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        repo = self.require_repository()
+        # 合并基底带上激活角色的元数据，避免非 Daily 角色首次保存时名字落回 "Daily"
+        if pet_id == self.active_pet_id:
+            return repo.update_persona(pet_id, patch, name=self.active_pet_name,
+                                       description=self.active_pet_description, defaults=self.active_pet_persona)
+        return repo.update_persona(pet_id, patch)
 
     def update_presence(self, params: dict[str, Any]) -> None:
         if self.scheduler:

@@ -34,9 +34,22 @@ description: 从角色参考图生成 Everby/Petdex 桌宠(pet.json + 1536×1872
 
    脚本逐帧去透明边缘、等比缩放进 192×208 单元格、底部居中对齐(锚点 96,208),合成无损 webp,并按需生成 pet.json。输出里的 `warnings` 会指出缺帧的行——缺帧的动作在桌面上是空白,要么补齐要么明确告知用户。
 
-2. 校验产物:`node skills/everby-pet-install/scripts/validate-pet.mjs <输出角色目录>`,`ok: true` 才算完成。
+2. **为角色写 persona 块**:这是生成型 skill 最擅长的一步。根据参考图的气质和用户的描述,为角色撰写默认人设,写进 pet.json(字段与优先级见 docs/pet-format.md 的 persona 节):
 
-3. 安装:按 everby-pet-install 的流程复制到 `~/.petdex/pets/<id>`,或让用户在管理窗口"角色"页用"导入角色"按钮选输出目录。
+   ```json
+   "persona": {
+     "speakingStyle": "与角色性格一致的语气/口癖/句式偏好,1000 字符以内",
+     "userAddress": "角色对用户的称呼,40 字符以内,不贴角色性格就省略",
+     "boundaries": "行为边界,2000 字符以内",
+     "background": "身份背景;description 已说清就省略"
+   }
+   ```
+
+   原则:风格要落在具体的说话方式上(例:"句尾常带'呢',兴奋时会重复词语"),而不是复述外观;用户在人设表单里的手动修改永远优先于此默认,所以不必保守求全。
+
+3. 校验产物:`node skills/everby-pet-install/scripts/validate-pet.mjs <输出角色目录>`,`ok: true` 才算完成。
+
+4. 安装:按 everby-pet-install 的流程复制到 `~/.petdex/pets/<id>`,或让用户在管理窗口"角色"页用"导入角色"按钮选输出目录。
 
 ## 边界
 

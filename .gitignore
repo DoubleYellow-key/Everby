@@ -48,6 +48,7 @@ htmlcov/
 *.sqlite-wal
 *.sqlite3
 resources/pets/
+artifacts/
 
 # Editors and operating systems
 .idea/

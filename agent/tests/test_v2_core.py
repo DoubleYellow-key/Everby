@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from everby_agent.graph.companion import ReplyStreamHandler
 from everby_agent.memory.filters import is_safe_memory
-from everby_agent.persistence.database import AgentRepository
+from everby_agent.persistence.database import AgentRepository, DEFAULT_PERSONA_BACKGROUND
 from everby_agent.persistence.migration import migrate_legacy_data
 from everby_agent.persona import build_persona_context, suppress_unsolicited_self_intro
 from everby_agent.runtime import checkpoint_database_path
@@ -133,24 +133,74 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual(first["id"], merged["id"])
         self.assertEqual(len(self.repo.list_memories("daily")), 1)
 
-    def test_default_persona_is_reserved_and_aloof(self):
+    def test_default_persona_is_neutral_without_character_defaults(self):
         persona = self.repo.get_persona("daily")
-        self.assertIn("高冷", persona["speakingStyle"])
-        self.assertIn("不主动自我介绍", persona["speakingStyle"])
+        self.assertIn("克制、自然、简洁", persona["speakingStyle"])
+        self.assertNotIn("高冷", persona["speakingStyle"])
+        self.assertEqual(persona["userAddress"], "你")
 
-    def test_migrates_only_legacy_persona_style(self):
+    def test_character_persona_defaults_shape_synthesized_persona(self):
+        daily = self.repo.get_persona("daily", "Daily", "", {
+            "speakingStyle": "高冷、克制、简短。",
+            "userAddress": "凯",
+        })
+        optimus = self.repo.get_persona("optimus", "Optimus", "", {
+            "speakingStyle": "热血、简练，像机器人领袖一样说话。",
+            "userAddress": "指挥官",
+        })
+        self.assertIn("高冷", daily["speakingStyle"])
+        self.assertEqual(daily["userAddress"], "凯")
+        self.assertIn("热血", optimus["speakingStyle"])
+        self.assertEqual(optimus["userAddress"], "指挥官")
+        self.assertNotEqual(daily["speakingStyle"], optimus["speakingStyle"])
+
+    def test_persisted_user_persona_always_wins_over_character_defaults(self):
+        defaults = {"speakingStyle": "热血、简练，像机器人领袖一样说话。"}
+        self.repo.update_persona("optimus", {"speakingStyle": "温柔慢语"})
+        self.assertEqual(self.repo.get_persona("optimus", "Optimus", "", defaults)["speakingStyle"], "温柔慢语")
+
+    def test_background_priority_character_persona_then_description_then_neutral(self):
+        described = self.repo.get_persona("fox", "小狐", "一只安静的狐狸")
+        self.assertEqual(described["background"], "一只安静的狐狸")
+        overridden = self.repo.get_persona("fox", "小狐", "一只安静的狐狸", {"background": "来自森林的守望者"})
+        self.assertEqual(overridden["background"], "来自森林的守望者")
+        bare = self.repo.get_persona("fox")
+        self.assertEqual(bare["background"], DEFAULT_PERSONA_BACKGROUND)
+
+    def test_migrates_legacy_persona_values_to_character_defaults(self):
         self.repo.update_persona("daily", {
             "name": "Daily",
             "speakingStyle": "像熟悉的朋友一样自然简洁。",
+            "background": "一位聪明、自然、温暖的桌面陪伴伙伴。",
             "userAddress": "凯",
         })
-        migrated = self.repo.migrate_legacy_persona_defaults("daily")
-        self.assertIn("高冷", migrated["speakingStyle"])
+        defaults = {"speakingStyle": "高冷、克制、简短。"}
+        migrated = self.repo.migrate_legacy_persona_defaults("daily", defaults)
+        self.assertEqual(migrated["speakingStyle"], "高冷、克制、简短。")
+        self.assertEqual(migrated["background"], DEFAULT_PERSONA_BACKGROUND)
         self.assertEqual(migrated["userAddress"], "凯")
 
         self.repo.update_persona("daily", {"speakingStyle": "活泼健谈"})
-        preserved = self.repo.migrate_legacy_persona_defaults("daily")
+        preserved = self.repo.migrate_legacy_persona_defaults("daily", defaults)
         self.assertEqual(preserved["speakingStyle"], "活泼健谈")
+
+    def test_migrates_previous_aloof_default_to_character_defaults(self):
+        # 老版本把 Daily 的高冷默认持久化给了所有角色；现在应重写为各角色自己的默认
+        self.repo.update_persona("fox", {
+            "speakingStyle": "高冷、克制、简短。少用语气词、感叹号和卖萌表达；不主动自我介绍，不重复称呼，关心通过准确回应和行动体现。",
+        })
+        migrated = self.repo.migrate_legacy_persona_defaults("fox", {"speakingStyle": "软绵绵，爱撒娇。"})
+        self.assertEqual(migrated["speakingStyle"], "软绵绵，爱撒娇。")
+
+    def test_persona_defaults_are_sanitized(self):
+        persona = self.repo.get_persona("daily", "Daily", "", {
+            "speakingStyle": "  " * 10,
+            "userAddress": 42,
+            "boundaries": "x" * 5000,
+        })
+        self.assertEqual(persona["userAddress"], "你")
+        self.assertNotEqual(persona["speakingStyle"], "  " * 10)
+        self.assertEqual(len(persona["boundaries"]), 2000)
 
 
 class PersonaPromptTests(unittest.TestCase):

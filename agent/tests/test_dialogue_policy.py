@@ -86,7 +86,7 @@ class DialoguePolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_companion_graph_routes_generated_copy_through_quality_nodes(self):
         class FakeRepository:
             @staticmethod
-            def get_persona(_pet_id, _name, _description):
+            def get_persona(_pet_id, _name, _description, _defaults=None):
                 return {"name": "Daily", "userAddress": "凯", "speakingStyle": "高冷、克制、简短"}
 
         graph = object.__new__(CompanionGraph)

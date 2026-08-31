@@ -1,8 +1,22 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { PetSummary } from "../../src/shared/contracts";
+import type { PetPersonaDefaults, PetSummary } from "../../src/shared/contracts";
 
 export const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+
+// 与 main.ts personaPatchSchema 的上限对齐；pet.json 是外部数据，非字符串/超长字段直接丢弃或截断
+const PERSONA_FIELD_CAPS = { background: 2_000, speakingStyle: 1_000, userAddress: 40, boundaries: 2_000 } as const;
+
+function parsePersonaDefaults(metadata: Record<string, unknown>): PetPersonaDefaults | undefined {
+  if (!metadata.persona || typeof metadata.persona !== "object" || Array.isArray(metadata.persona)) return undefined;
+  const raw = metadata.persona as Record<string, unknown>;
+  const persona: PetPersonaDefaults = {};
+  for (const [key, cap] of Object.entries(PERSONA_FIELD_CAPS) as [keyof PetPersonaDefaults, number][]) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) persona[key] = value.trim().slice(0, cap);
+  }
+  return Object.keys(persona).length ? persona : undefined;
+}
 
 export interface CatalogPet extends Omit<PetSummary, "sheetUrl"> {
   directory: string;
@@ -40,7 +54,8 @@ async function readPet(directory: string, id: string, source: CatalogPet["source
     if (!sheetFile) return null;
     const name = typeof metadata.displayName === "string" && metadata.displayName.trim() ? metadata.displayName.trim().slice(0, 80) : id;
     const description = typeof metadata.description === "string" ? metadata.description.trim().slice(0, 500) : "";
-    return { id, name, description, source, directory, sheetFile };
+    const persona = parsePersonaDefaults(metadata);
+    return { id, name, description, source, directory, sheetFile, ...(persona ? { persona } : {}) };
   } catch { return null; }
 }
 

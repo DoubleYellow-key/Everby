@@ -11,14 +11,32 @@ from typing import Any, Iterable, Sequence
 from ..memory.filters import is_safe_memory
 
 MEMORY_TYPES = {"preference", "identity", "goal", "project", "habit", "relationship", "commitment"}
-DEFAULT_PERSONA_BACKGROUND = "一位冷静、可靠、略显高冷的桌面陪伴伙伴。关心用户，但不刻意表现热络。"
-DEFAULT_PERSONA_STYLE = (
-    "高冷、克制、简短。少用语气词、感叹号和卖萌表达；不主动自我介绍，不重复称呼，"
-    "关心通过准确回应和行动体现。"
-)
+DEFAULT_PERSONA_BACKGROUND = "一位桌面陪伴伙伴，关心用户，回应专注可靠。"
+DEFAULT_PERSONA_STYLE = "克制、自然、简洁。不主动自我介绍，不重复称呼，关心通过准确回应和行动体现。"
 DEFAULT_PERSONA_BOUNDARIES = "尊重隐私，不假装看到了未提供的信息；不使用虚假的热情或套话。"
-LEGACY_PERSONA_BACKGROUNDS = {"一位聪明、自然、温暖的桌面陪伴伙伴。"}
-LEGACY_PERSONA_STYLES = {"", "像熟悉的朋友一样自然简洁。"}
+# 旧版本合成过的默认人设值：命中说明该字段从未被用户真正编辑过，可安全重写为当前角色自己的默认
+LEGACY_PERSONA_BACKGROUNDS = {
+    "一位聪明、自然、温暖的桌面陪伴伙伴。",
+    "一位冷静、可靠、略显高冷的桌面陪伴伙伴。关心用户，但不刻意表现热络。",
+}
+LEGACY_PERSONA_STYLES = {
+    "",
+    "像熟悉的朋友一样自然简洁。",
+    "高冷、克制、简短。少用语气词、感叹号和卖萌表达；不主动自我介绍，不重复称呼，关心通过准确回应和行动体现。",
+}
+# 与 src/shared/contracts.ts 的 personaPatchSchema 上限对齐
+PERSONA_FIELD_CAPS = {"background": 2000, "speakingStyle": 1000, "userAddress": 40, "boundaries": 2000}
+
+
+def sanitize_persona_defaults(value: Any) -> dict[str, str]:
+    """pet.json 声明的 persona 默认值是外部数据：只接受非空字符串并按上限截断。"""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: field.strip()[:cap]
+        for key, cap in PERSONA_FIELD_CAPS.items()
+        if isinstance((field := value.get(key)), str) and field.strip()
+    }
 
 
 def _now_ms() -> int:
@@ -284,35 +302,42 @@ class AgentRepository:
         by_id = {row["id"]: self._memory(row) for row in rows}
         return [by_id[item] for item in selected]
 
-    def get_persona(self, pet_id: str, name: str = "Daily", description: str = "") -> dict[str, Any]:
+    def get_persona(self, pet_id: str, name: str = "Daily", description: str = "",
+                    defaults: dict[str, Any] | None = None) -> dict[str, Any]:
         row = self.db.execute("SELECT value_json FROM agent_personas WHERE pet_id=?", (pet_id,)).fetchone()
-        return json.loads(row[0]) if row else {
+        if row:
+            return json.loads(row[0])
+        overrides = sanitize_persona_defaults(defaults)
+        return {
             "petId": pet_id,
             "name": name,
-            "background": description or DEFAULT_PERSONA_BACKGROUND,
-            "speakingStyle": DEFAULT_PERSONA_STYLE,
-            "userAddress": "你",
-            "boundaries": DEFAULT_PERSONA_BOUNDARIES,
+            "background": overrides.get("background") or description or DEFAULT_PERSONA_BACKGROUND,
+            "speakingStyle": overrides.get("speakingStyle") or DEFAULT_PERSONA_STYLE,
+            "userAddress": overrides.get("userAddress") or "你",
+            "boundaries": overrides.get("boundaries") or DEFAULT_PERSONA_BOUNDARIES,
         }
 
-    def migrate_legacy_persona_defaults(self, pet_id: str) -> dict[str, Any]:
+    def migrate_legacy_persona_defaults(self, pet_id: str, defaults: dict[str, Any] | None = None,
+                                        description: str = "") -> dict[str, Any]:
         row = self.db.execute("SELECT value_json FROM agent_personas WHERE pet_id=?", (pet_id,)).fetchone()
         if not row:
-            return self.get_persona(pet_id)
+            return self.get_persona(pet_id, description=description, defaults=defaults)
         value = json.loads(row[0])
+        overrides = sanitize_persona_defaults(defaults)
         changed = False
         if value.get("speakingStyle", "") in LEGACY_PERSONA_STYLES:
-            value["speakingStyle"] = DEFAULT_PERSONA_STYLE
+            value["speakingStyle"] = overrides.get("speakingStyle") or DEFAULT_PERSONA_STYLE
             changed = True
         if value.get("background") in LEGACY_PERSONA_BACKGROUNDS:
-            value["background"] = DEFAULT_PERSONA_BACKGROUND
+            value["background"] = overrides.get("background") or description or DEFAULT_PERSONA_BACKGROUND
             changed = True
         if changed:
             return self.update_persona(pet_id, value)
         return value
 
-    def update_persona(self, pet_id: str, patch: dict[str, Any]) -> dict[str, Any]:
-        value = {**self.get_persona(pet_id), **patch, "petId": pet_id}
+    def update_persona(self, pet_id: str, patch: dict[str, Any], *, name: str = "Daily",
+                       description: str = "", defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+        value = {**self.get_persona(pet_id, name, description, defaults), **patch, "petId": pet_id}
         self.db.execute("INSERT INTO agent_personas VALUES(?,?,?) ON CONFLICT(pet_id) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at", (pet_id, json.dumps(value, ensure_ascii=True), _now_ms()))
         self.db.commit()
         return value

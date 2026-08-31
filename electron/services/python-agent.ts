@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { join } from "node:path";
 import { z } from "zod";
-import type { AgentCapabilities, AgentSnapshot, CreateTodoInput, MemoryItem, PersonaProfile, TodoItem, UpdateTodoInput } from "../../src/shared/contracts";
+import type { AgentCapabilities, AgentSnapshot, CreateTodoInput, MemoryItem, PersonaProfile, PetPersonaDefaults, TodoItem, UpdateTodoInput } from "../../src/shared/contracts";
 
 const errorSchema = z.object({ code: z.string(), message: z.string(), retryable: z.boolean() }).strict();
 const resultSchema = z.object({ protocolVersion: z.literal(2), id: z.string(), result: z.unknown().optional(), error: errorSchema.optional() }).strict();
@@ -16,7 +16,7 @@ type Pending = {
 };
 export type PythonAgentEvent = z.infer<typeof eventSchema>;
 export type RuntimeConfiguration = {
-  databasePath: string; petId: string; petName: string; petDescription: string; timezone: string;
+  databasePath: string; petId: string; petName: string; petDescription: string; petPersona?: PetPersonaDefaults | null; timezone: string;
   chat: { baseUrl: string; apiKey: string; model: string; temperature: number };
   embedding: { baseUrl: string; apiKey: string; model: string };
 };

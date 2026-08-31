@@ -237,7 +237,7 @@ async function motionCatalog(): Promise<MotionCatalog> {
 
 function snapshot(): AppSnapshot {
   const pet = activePet();
-  const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item) }));
+  const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item), ...(item.persona ? { persona: item.persona } : {}) }));
   return {
     activePetId: pet.id, pets, persona: agentSnapshot.persona, model: database.getModel(), embedding: database.getEmbedding(), settings: database.getSettings(),
     messages: agentSnapshot.messages, memorySummary: agentSnapshot.memorySummary, motionPacks: database.listMotionPacks(pet.id), actionRules: database.listActionRules(pet.id),
@@ -254,6 +254,7 @@ async function configureAgent(): Promise<void> {
   await agent.health();
   await agent.configure({
     databasePath: join(app.getPath("userData"), "everby.db"), petId: pet.id, petName: pet.name, petDescription: pet.description,
+    petPersona: pet.persona ?? null,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     chat: { ...model, apiKey: apiKey ?? "" }, embedding: { ...embedding, apiKey: embeddingApiKey ?? "" }
   });

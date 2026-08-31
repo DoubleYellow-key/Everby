@@ -100,7 +100,7 @@ def select_action(text: str) -> str:
 class CompanionGraph:
     def __init__(self, repository: AgentRepository, model: Any, capabilities: dict[str, bool], checkpointer: Any = None,
                  embed_query: Any = None, timezone: str = "Asia/Shanghai", emit: Any = None,
-                 default_persona: dict[str, str] | None = None):
+                 default_persona: dict[str, Any] | None = None):
         self.repository = repository
         self.model = model
         self.capabilities = capabilities
@@ -186,6 +186,7 @@ class CompanionGraph:
             state["pet_id"],
             self.default_persona.get("name", "Daily"),
             self.default_persona.get("description", ""),
+            self.default_persona.get("persona"),
         )
         plan = DialoguePlan(**state["dialogue_plan"])
         return [
@@ -220,6 +221,7 @@ class CompanionGraph:
             state["pet_id"],
             self.default_persona.get("name", "Daily"),
             self.default_persona.get("description", ""),
+            self.default_persona.get("persona"),
         )
 
     async def _quality_gate(self, state: CompanionState) -> CompanionState:

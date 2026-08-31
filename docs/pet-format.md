@@ -24,6 +24,34 @@ Everby 的桌宠角色与 Petdex 生态共享同一目录格式。本文档是�
 | --- | --- | --- |
 | `displayName` | string | 界面显示名，缺省用 id |
 | `description` | string | 角色描述，最长 500 字符，注入 agent 人设上下文 |
+| `persona` | object | 可选，角色默认人设（见下节） |
+
+### persona 块
+
+角色作者用它声明该角色的默认说话风格，让每个 pet 有自己的"嗓音"。全部字段可选：
+
+```json
+"persona": {
+  "speakingStyle": "热血、简练，像机器人领袖一样说话。……",
+  "userAddress": "指挥官",
+  "boundaries": "……",
+  "background": "……（可选，缺省回退到 description）"
+}
+```
+
+| 字段 | 上限 | 说明 |
+| --- | --- | --- |
+| `speakingStyle` | 1000 字符 | 语气、口癖、句式偏好，直接写入 system prompt |
+| `userAddress` | 40 字符 | 角色对用户的称呼，缺省为"你" |
+| `boundaries` | 2000 字符 | 行为边界（不做什么） |
+| `background` | 2000 字符 | 身份背景；缺省时用 `description` |
+
+非字符串或空字段会被忽略，超长字段按上限截断。生效优先级（高到低）：
+
+1. **用户在管理窗口"人设"表单里的手动修改**（持久化在本地数据库，永远优先）；
+2. pet.json 的 `persona` 块；
+3. `description`（仅 background）；
+4. 应用内置的中性通用默认。
 
 `id`、`spritesheetPath`、`kind`、`origin`、`vibes`、`tags`、`motions` 等字段属于 Petdex 生态元数据，Everby 不解析，可以保留。
 
