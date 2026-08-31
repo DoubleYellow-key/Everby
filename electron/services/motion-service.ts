@@ -1,52 +1,9 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, normalize, resolve, sep } from "node:path";
+import { mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import sharp from "sharp";
-import yauzl from "yauzl";
 import { parseMotionManifest, type MotionManifest } from "../../src/core/motion-manifest";
 import type { PetAnimation } from "../../src/shared/contracts";
-
-const MAX_UNPACKED = 100 * 1024 * 1024;
-const unsafeEntry = (name: string): boolean => {
-  const value = name.replaceAll("\\", "/");
-  return value.startsWith("/") || /^[a-zA-Z]:/.test(value) || value.split("/").some((part) => part === ".." || !part) || /\.(exe|dll|bat|cmd|ps1|js|mjs|cjs|vbs|scr)$/i.test(value);
-};
-
-function openZip(path: string): Promise<yauzl.ZipFile> {
-  return new Promise((resolveOpen, reject) => yauzl.open(path, { lazyEntries: true }, (error, zip) => error || !zip ? reject(error ?? new Error("无法打开扩展包")) : resolveOpen(zip)));
-}
-
-async function extract(path: string, destination: string): Promise<void> {
-  const zip = await openZip(path);
-  let total = 0;
-  let entries = 0;
-  await new Promise<void>((resolveExtract, reject) => {
-    zip.on("entry", (entry) => {
-      entries += 1;
-      if (entries > 2_000) return reject(new Error("扩展包文件数量超过 2000"));
-      if (unsafeEntry(entry.fileName)) return reject(new Error("扩展包包含不安全路径"));
-      const mode = (entry.externalFileAttributes >>> 16) & 0o170000;
-      if (mode === 0o120000) return reject(new Error("扩展包不能包含符号链接"));
-      total += entry.uncompressedSize;
-      if (total > MAX_UNPACKED) return reject(new Error("扩展包解压后超过 100 MB"));
-      const output = resolve(destination, normalize(entry.fileName));
-      if (!output.startsWith(`${resolve(destination)}${sep}`)) return reject(new Error("扩展包路径越界"));
-      if (entry.fileName.endsWith("/")) { void mkdir(output, { recursive: true }).then(() => zip.readEntry(), reject); return; }
-      zip.openReadStream(entry, (error, stream) => {
-        if (error || !stream) return reject(error ?? new Error("无法读取扩展资源"));
-        void mkdir(dirname(output), { recursive: true }).then(() => new Promise<void>((done, fail) => {
-          const chunks: Buffer[] = [];
-          stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          stream.on("error", fail);
-          stream.on("end", () => void writeFile(output, Buffer.concat(chunks)).then(done, fail));
-        })).then(() => zip.readEntry(), reject);
-      });
-    });
-    zip.on("end", resolveExtract);
-    zip.on("error", reject);
-    zip.readEntry();
-  });
-  zip.close();
-}
+import { extractZip } from "./zip-extract";
 
 export class MotionService {
   constructor(private readonly root: string) {}
@@ -55,7 +12,7 @@ export class MotionService {
     const staging = join(this.root, `.staging-${crypto.randomUUID()}`);
     await mkdir(staging, { recursive: true });
     try {
-      await extract(archivePath, staging);
+      await extractZip(archivePath, staging);
       const manifest = parseMotionManifest(JSON.parse(await readFile(join(staging, "motion.json"), "utf8")));
       if (targetPetId && manifest.targetPetId !== targetPetId) throw new Error("动作扩展不适用于当前角色");
       const destination = join(this.root, manifest.packId);

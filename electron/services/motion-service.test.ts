@@ -13,10 +13,13 @@ describe("MotionService example extension", () => {
     const service = new MotionService(directory);
     const installed = await service.install(resolve("examples/motions/daily-routines.soulmotion"), new Set(["idle", "wave", "jump"]), "daily");
     const actions = await service.loadAnimations(installed.path, installed.manifest.packId, "daily", installed.manifest.name, true);
+    expect(installed.manifest.version).toBe("1.1.0");
     expect(actions.map((action) => action.id)).toEqual(["daily-cheer-combo", "daily-focus-cycle", "daily-reset-stretch"]);
     expect(actions.map((action) => action.label)).toEqual(["欢呼组合", "专注循环", "舒展恢复"]);
     expect(actions.every((action) => action.source === "extension" && action.enabled)).toBe(true);
     expect(actions.flatMap((action) => action.frames).every((frame) => frame.src?.startsWith("everby://motion/daily-routines/"))).toBe(true);
+    expect(actions.find((action) => action.id === "daily-cheer-combo")?.frames.length).toBe(16);
+    expect(actions.find((action) => action.id === "daily-focus-cycle")?.frames.length).toBe(18);
   });
 
   it("rejects importing the Daily extension for another role", async () => {

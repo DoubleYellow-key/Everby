@@ -18,6 +18,10 @@ os.environ.setdefault("LANGSMITH_TRACING", "false")
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 
+def checkpoint_database_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.checkpoints")
+
+
 def backup_and_reset_legacy(path: Path) -> Path | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
@@ -81,6 +85,7 @@ class AgentRuntime:
         self.active_pet_id = str(params.get("petId") or "daily")[:100]
         self.active_pet_name = str(params.get("petName") or self.active_pet_id)[:80]
         self.active_pet_description = str(params.get("petDescription") or "")[:2000]
+        self.repository.migrate_legacy_persona_defaults(self.active_pet_id)
         self.timezone = str(params.get("timezone") or "Asia/Shanghai")[:100]
         chat = params.get("chat") if isinstance(params.get("chat"), dict) else {}
         embedding = params.get("embedding") if isinstance(params.get("embedding"), dict) else {}
@@ -88,7 +93,10 @@ class AgentRuntime:
         self.embeddings = self._embeddings(embedding) if embedding.get("apiKey") and embedding.get("model") else None
         if self.chat_model and self.checkpointer is None:
             self.emit("agent_progress", {"node": "configure_checkpoint"}, None)
-            self.checkpoint_connection = await aiosqlite.connect(db_path)
+            self.checkpoint_connection = await aiosqlite.connect(checkpoint_database_path(db_path))
+            await self.checkpoint_connection.execute("PRAGMA journal_mode=WAL")
+            await self.checkpoint_connection.execute("PRAGMA busy_timeout=5000")
+            await self.checkpoint_connection.commit()
             self.checkpointer = AsyncSqliteSaver(self.checkpoint_connection, serde=JsonPlusSerializer(pickle_fallback=False))
             await self.checkpointer.setup()
         self.capabilities = {"streaming": bool(self.chat_model), "toolCalling": False, "embedding": bool(self.embeddings)}
@@ -119,7 +127,11 @@ class AgentRuntime:
     def _rebuild_graph(self) -> None:
         if self.repository and self.chat_model:
             embed = self.embeddings.embed_query if self.embeddings and self.capabilities["embedding"] else None
-            self.graph = CompanionGraph(self.repository, self.chat_model, dict(self.capabilities), self.checkpointer, embed, self.timezone, self.emit)
+            self.graph = CompanionGraph(
+                self.repository, self.chat_model, dict(self.capabilities), self.checkpointer, embed,
+                self.timezone, self.emit,
+                {"name": self.active_pet_name, "description": self.active_pet_description},
+            )
         else:
             self.graph = None
 

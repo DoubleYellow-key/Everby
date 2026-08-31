@@ -1,13 +1,19 @@
 import type { PetFrame } from "../shared/contracts";
 
-export function frameAtTime(frames: PetFrame[], elapsedMs: number, loop: boolean): number {
-  if (frames.length === 0) return 0;
+function timelinePosition(frames: PetFrame[], elapsedMs: number, loop: boolean): { index: number; elapsedInFrame: number } {
+  if (frames.length === 0) return { index: 0, elapsedInFrame: 0 };
   const duration = frames.reduce((total, frame) => total + frame.durationMs, 0);
-  const cursor = loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1);
+  if (duration <= 0) return { index: 0, elapsedInFrame: 0 };
+  const cursor = loop ? Math.max(0, elapsedMs) % duration : Math.min(Math.max(0, elapsedMs), duration - 1);
   let accumulated = 0;
   for (let index = 0; index < frames.length; index += 1) {
+    const startedAt = accumulated;
     accumulated += frames[index].durationMs;
-    if (cursor < accumulated) return index;
+    if (cursor < accumulated) return { index, elapsedInFrame: cursor - startedAt };
   }
-  return frames.length - 1;
+  return { index: frames.length - 1, elapsedInFrame: frames.at(-1)?.durationMs ?? 0 };
+}
+
+export function frameAtTime(frames: PetFrame[], elapsedMs: number, loop: boolean): number {
+  return timelinePosition(frames, elapsedMs, loop).index;
 }

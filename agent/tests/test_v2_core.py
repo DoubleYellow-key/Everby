@@ -8,12 +8,17 @@ from pydantic import ValidationError
 
 from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository
+from everby_agent.persona import build_persona_context, suppress_unsolicited_self_intro
+from everby_agent.runtime import checkpoint_database_path
 from everby_agent.schemas.protocol import RpcRequest
 from everby_agent.workflows.reminder_copy import compose_reminder_copy
 from everby_agent.workflows.scheduler import AgentScheduler
 
 
 class ProtocolV2Tests(unittest.TestCase):
+    def test_checkpoint_database_is_isolated_from_domain_writes(self):
+        self.assertEqual(checkpoint_database_path(Path("everby.db")), Path("everby.db.checkpoints"))
+
     def test_rejects_incompatible_protocol(self):
         with self.assertRaises(ValidationError):
             RpcRequest.model_validate({"id": "1", "protocolVersion": 1, "method": "agent.snapshot", "params": {}})
@@ -82,6 +87,50 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual(first["id"], merged["id"])
         self.assertEqual(len(self.repo.list_memories("daily")), 1)
 
+    def test_default_persona_is_reserved_and_aloof(self):
+        persona = self.repo.get_persona("daily")
+        self.assertIn("高冷", persona["speakingStyle"])
+        self.assertIn("不主动自我介绍", persona["speakingStyle"])
+
+    def test_migrates_only_legacy_persona_style(self):
+        self.repo.update_persona("daily", {
+            "name": "Daily",
+            "speakingStyle": "像熟悉的朋友一样自然简洁。",
+            "userAddress": "凯",
+        })
+        migrated = self.repo.migrate_legacy_persona_defaults("daily")
+        self.assertIn("高冷", migrated["speakingStyle"])
+        self.assertEqual(migrated["userAddress"], "凯")
+
+        self.repo.update_persona("daily", {"speakingStyle": "活泼健谈"})
+        preserved = self.repo.migrate_legacy_persona_defaults("daily")
+        self.assertEqual(preserved["speakingStyle"], "活泼健谈")
+
+
+class PersonaPromptTests(unittest.TestCase):
+    def test_persona_context_is_configuration_not_an_intro_request(self):
+        prompt = build_persona_context({
+            "name": "Daily",
+            "background": "冷静可靠",
+            "speakingStyle": "高冷、克制、简短",
+            "userAddress": "凯",
+            "boundaries": "尊重隐私",
+        })
+        self.assertIn("高冷、克制、简短", prompt)
+        self.assertIn("不是让你复述的开场白", prompt)
+        self.assertIn("不要主动说“我是 Daily”", prompt)
+
+    def test_removes_repeated_intro_unless_user_asks_for_identity(self):
+        reply = "凯，我是Daily呀，已经到吃午饭的时间了。"
+        self.assertEqual(
+            suppress_unsolicited_self_intro(reply, "Daily", "凯", "提醒我吃饭"),
+            "已经到吃午饭的时间了。",
+        )
+        self.assertEqual(
+            suppress_unsolicited_self_intro(reply, "Daily", "凯", "你是谁？"),
+            reply,
+        )
+
 
 class MemoryFilterTests(unittest.TestCase):
     def test_rejects_credentials_and_transient_smalltalk(self):
@@ -145,7 +194,7 @@ class ReminderCopyTests(unittest.IsolatedAsyncioTestCase):
 
             async def ainvoke(self, messages):
                 self.messages = messages
-                return SimpleNamespace(content="小林，午饭时间到啦。\n先好好吃饭，工作回来再继续。")
+                return SimpleNamespace(content="小林，我是Daily呀，午饭时间到啦。\n先好好吃饭，工作回来再继续。")
 
         model = FakeModel()
         result = await compose_reminder_copy(
@@ -154,10 +203,11 @@ class ReminderCopyTests(unittest.IsolatedAsyncioTestCase):
             [{"title": "吃午饭", "notes": "别太晚"}],
         )
 
-        self.assertEqual(result, "小林，午饭时间到啦。 先好好吃饭，工作回来再继续。")
+        self.assertEqual(result, "午饭时间到啦。 先好好吃饭，工作回来再继续。")
         prompt = "\n".join(str(message.content) for message in model.messages)
         self.assertIn("像熟悉的朋友", prompt)
         self.assertIn("吃午饭", prompt)
+        self.assertIn("不要在提醒里自我介绍", prompt)
 
 
 if __name__ == "__main__":

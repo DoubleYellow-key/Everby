@@ -11,6 +11,14 @@ from typing import Any, Iterable, Sequence
 from ..memory.filters import is_safe_memory
 
 MEMORY_TYPES = {"preference", "identity", "goal", "project", "habit", "relationship", "commitment"}
+DEFAULT_PERSONA_BACKGROUND = "一位冷静、可靠、略显高冷的桌面陪伴伙伴。关心用户，但不刻意表现热络。"
+DEFAULT_PERSONA_STYLE = (
+    "高冷、克制、简短。少用语气词、感叹号和卖萌表达；不主动自我介绍，不重复称呼，"
+    "关心通过准确回应和行动体现。"
+)
+DEFAULT_PERSONA_BOUNDARIES = "尊重隐私，不假装看到了未提供的信息；不使用虚假的热情或套话。"
+LEGACY_PERSONA_BACKGROUNDS = {"一位聪明、自然、温暖的桌面陪伴伙伴。"}
+LEGACY_PERSONA_STYLES = {"", "像熟悉的朋友一样自然简洁。"}
 
 
 def _now_ms() -> int:
@@ -278,7 +286,30 @@ class AgentRepository:
 
     def get_persona(self, pet_id: str, name: str = "Daily", description: str = "") -> dict[str, Any]:
         row = self.db.execute("SELECT value_json FROM agent_personas WHERE pet_id=?", (pet_id,)).fetchone()
-        return json.loads(row[0]) if row else {"petId": pet_id, "name": name, "background": description or "一位聪明、自然、温暖的桌面陪伴伙伴。", "speakingStyle": "像熟悉的朋友一样自然简洁。", "userAddress": "你", "boundaries": "尊重隐私，不假装看到了未提供的信息。"}
+        return json.loads(row[0]) if row else {
+            "petId": pet_id,
+            "name": name,
+            "background": description or DEFAULT_PERSONA_BACKGROUND,
+            "speakingStyle": DEFAULT_PERSONA_STYLE,
+            "userAddress": "你",
+            "boundaries": DEFAULT_PERSONA_BOUNDARIES,
+        }
+
+    def migrate_legacy_persona_defaults(self, pet_id: str) -> dict[str, Any]:
+        row = self.db.execute("SELECT value_json FROM agent_personas WHERE pet_id=?", (pet_id,)).fetchone()
+        if not row:
+            return self.get_persona(pet_id)
+        value = json.loads(row[0])
+        changed = False
+        if value.get("speakingStyle", "") in LEGACY_PERSONA_STYLES:
+            value["speakingStyle"] = DEFAULT_PERSONA_STYLE
+            changed = True
+        if value.get("background") in LEGACY_PERSONA_BACKGROUNDS:
+            value["background"] = DEFAULT_PERSONA_BACKGROUND
+            changed = True
+        if changed:
+            return self.update_persona(pet_id, value)
+        return value
 
     def update_persona(self, pet_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         value = {**self.get_persona(pet_id), **patch, "petId": pet_id}

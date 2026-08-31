@@ -88,7 +88,7 @@ describe("AppDatabase desktop-domain ownership", () => {
     expect(database.migrateActionSystemV3("daily", DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles("daily", 5_000), 5_000)).toBe(true);
     expect(database.archivedActionRuleCount("daily")).toBe(1);
     expect(database.listActionRules("daily").map((rule) => rule.name)).not.toContain("Legacy");
-    expect(database.listActionProfiles("daily").map((profile) => profile.mode)).toEqual(["normal", "focus", "rest"]);
+    expect(database.listActionProfiles("daily").map((profile) => profile.mode)).toEqual(["normal"]);
     expect(database.migrateActionSystemV3("daily", [], [], 6_000)).toBe(false);
     expect(database.archivedActionRuleCount("daily")).toBe(1);
     database.close();
@@ -98,25 +98,66 @@ describe("AppDatabase desktop-domain ownership", () => {
     const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
     const path = join(directory, "app.db");
     let database = new AppDatabase(path);
-    database.startActionMode("daily", "focus", 25, "manual", 1_000);
+    const work = database.createActionProfile("daily", {
+      name: "工作", activityRatio: 0.8, strategy: "fixed", items: [{ actionId: "working", weight: 1 }],
+      fallbackActionId: "working", actionDurationSeconds: 90, defaultDurationMinutes: 25, eventActions: {}
+    }, 500);
+    database.startActionMode("daily", work.mode, 25, "manual", 1_000);
     database.close();
     database = new AppDatabase(path);
-    expect(database.getActionMode("daily", 2_000)).toMatchObject({ mode: "focus", source: "manual", endsAt: 1_501_000 });
+    expect(database.getActionMode("daily", 2_000)).toMatchObject({ mode: work.mode, source: "manual", endsAt: 1_501_000 });
     expect(database.getActionMode("daily", 1_501_001).mode).toBe("normal");
     database.close();
   });
 
-  it("upgrades the original short focus profile to longer seated sessions once", () => {
+  it("creates, updates and deletes custom states while protecting normal", () => {
     const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
     const database = new AppDatabase(join(directory, "app.db"));
-    const focus = defaultActionProfiles("daily", 1_000).find((profile) => profile.mode === "focus")!;
-    database.saveActionProfile({ ...focus, activityRatio: 0.7 });
-    database.setInitializationVersion("action-system:daily", 3);
-    expect(database.migrateActionSystemV3("daily", [], [], 2_000)).toBe(false);
-    expect(database.listActionProfiles("daily")[0].activityRatio).toBe(0.9);
-    database.saveActionProfile({ ...focus, activityRatio: 0.8, updatedAt: 3_000 });
-    database.migrateActionSystemV3("daily", [], [], 4_000);
-    expect(database.listActionProfiles("daily")[0].activityRatio).toBe(0.8);
+    database.saveActionProfile(defaultActionProfiles("daily", 1_000)[0]);
+    const work = database.createActionProfile("daily", {
+      name: "工作", activityRatio: 0.8, strategy: "fixed", items: [{ actionId: "working", weight: 1 }],
+      fallbackActionId: "working", actionDurationSeconds: 90, defaultDurationMinutes: 45,
+      eventActions: { pet_click: { actionId: "impatient", durationSeconds: 3 } }
+    }, 2_000);
+    expect(work.mode).toMatch(/^state-/);
+    expect(database.updateActionProfile("daily", work.mode, { ...work, name: "深度工作", activityRatio: 0.85 }, 3_000).name).toBe("深度工作");
+    expect(() => database.deleteActionProfile("daily", "normal")).toThrow("常规状态不能删除");
+    expect(database.deleteActionProfile("daily", work.mode)).toBe(true);
+    database.close();
+  });
+
+  it("archives fixed v3 profiles and leaves only the normal state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    const normal = defaultActionProfiles("daily", 5_000)[0];
+    database.saveActionProfile(normal);
+    database.saveActionProfile({ ...normal, mode: "focus", name: "专注", defaultDurationMinutes: 45 });
+    database.saveActionProfile({ ...normal, mode: "rest", name: "休息", defaultDurationMinutes: 10 });
+    expect(database.migrateActionStatesV1("daily", normal, 6_000)).toBe(true);
+    expect(database.listActionProfiles("daily").map((profile) => profile.mode)).toEqual(["normal"]);
+    expect(database.archivedActionProfileCount("daily")).toBe(3);
+    expect(database.migrateActionStatesV1("daily", normal, 7_000)).toBe(false);
+    database.close();
+  });
+
+  it("upgrades only the untouched legacy click interaction rule", () => {
+    const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    const legacy = database.createActionRule("daily", {
+      name: "点击时欢呼", actionId: "daily-cheer-combo", enabled: true, durationSeconds: 4,
+      trigger: { type: "event", event: "pet_click", probability: 0.65, cooldownSeconds: 12 }
+    });
+    const custom = database.createActionRule("daily", {
+      name: "我的点击动作", actionId: "stretch", enabled: true, durationSeconds: 6,
+      trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 3 }
+    });
+    expect(database.migrateClickInteractionV1("daily", 5_000)).toBe(true);
+    expect(database.listActionRules("daily").find((rule) => rule.id === legacy.id)).toMatchObject({
+      name: "点击互动", actionId: "interaction", durationSeconds: 3,
+      trigger: { event: "pet_click", probability: 1, cooldownSeconds: 0 }
+    });
+    expect(database.listActionRules("daily").find((rule) => rule.id === custom.id)?.actionId).toBe("stretch");
+    expect(database.migrateClickInteractionV1("daily", 6_000)).toBe(false);
     database.close();
   });
 });

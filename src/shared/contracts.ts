@@ -132,17 +132,25 @@ export interface ActionRule {
 export type CreateActionRuleInput = Pick<ActionRule, "name" | "actionId" | "enabled" | "durationSeconds" | "trigger">;
 export type UpdateActionRuleInput = Partial<CreateActionRuleInput>;
 
-export type ActionMode = "normal" | "focus" | "rest";
+export type ActionMode = string;
 export interface ActionProfileItem { actionId: string; weight: number }
+export interface ActionEventBinding { actionId: string; durationSeconds: number }
+export type ActionProfileEvents = Partial<Record<ActionRuleEvent, ActionEventBinding>>;
 export interface ActionProfile {
   petId: string;
   mode: ActionMode;
+  name: string;
   activityRatio: number;
   strategy: "weighted" | "fixed";
   items: ActionProfileItem[];
   fallbackActionId: string;
+  actionDurationSeconds: number;
+  defaultDurationMinutes: number;
+  eventActions: ActionProfileEvents;
   updatedAt: number;
 }
+export type CreateActionProfileInput = Pick<ActionProfile, "name" | "activityRatio" | "strategy" | "items" | "fallbackActionId" | "actionDurationSeconds" | "defaultDurationMinutes" | "eventActions">;
+export type UpdateActionProfileInput = CreateActionProfileInput;
 export interface ActionModeSession {
   petId: string;
   mode: ActionMode;
@@ -257,6 +265,7 @@ export interface EverbyApi {
   getSnapshot(): Promise<AppSnapshot>;
   getPetRuntime(): Promise<PetRuntime>;
   selectPet(petId: string): Promise<void>;
+  importPet(): Promise<PetSummary | null>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   updatePersona(patch: Partial<PersonaProfile>): Promise<PersonaProfile>;
   updateModel(patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }): Promise<ModelSettings>;
@@ -278,8 +287,10 @@ export interface EverbyApi {
   updateActionRule(id: string, patch: UpdateActionRuleInput): Promise<ActionRule>;
   deleteActionRule(id: string): Promise<void>;
   recordActionRuleTrigger(id: string, triggeredAt: number): Promise<void>;
-  updateActionProfile(mode: ActionMode, patch: Pick<ActionProfile, "activityRatio" | "strategy" | "items" | "fallbackActionId">): Promise<ActionProfile>;
-  startActionMode(mode: "focus" | "rest", durationMinutes: number): Promise<ActionModeSession>;
+  createActionProfile(input: CreateActionProfileInput): Promise<ActionProfile>;
+  updateActionProfile(mode: ActionMode, patch: UpdateActionProfileInput): Promise<ActionProfile>;
+  deleteActionProfile(mode: ActionMode): Promise<void>;
+  startActionMode(mode: ActionMode): Promise<ActionModeSession>;
   stopActionMode(): Promise<ActionModeSession>;
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
   updateTodo(id: string, patch: UpdateTodoInput): Promise<TodoItem>;

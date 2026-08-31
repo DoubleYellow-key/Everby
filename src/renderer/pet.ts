@@ -1,10 +1,11 @@
 import "./pet.css";
 import { enqueueAction, shouldInterruptAction, type QueuedAction } from "../core/action-queue";
 import { actionPriority, consumeDirectorActivity, createDirectorState, switchDirectorMode, tickDirector } from "../core/action-director";
-import { selectEventRule } from "../core/action-rules";
+import { selectEventRule, selectProfileEventAction } from "../core/action-rules";
 import { chooseAnimation } from "../core/behavior";
+import { classifyPetPointer, shouldStartPetDrag } from "../core/pet-pointer";
 import { frameAtTime } from "../core/timeline";
-import type { ActionRule, PetActionInput, PetActionRequest, PetActionSignal, PetAnimation, PetRuntime } from "../shared/contracts";
+import type { ActionRule, PetActionInput, PetActionRequest, PetActionSignal, PetAnimation, PetFrame, PetRuntime } from "../shared/contracts";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#pet-canvas")!;
 const context = canvas.getContext("2d", { alpha: true })!;
@@ -21,6 +22,7 @@ let pendingActions: QueuedAction[] = [];
 let x = 0;
 let y = 0;
 let dragging = false;
+let pressedPointer: { id: number; button: number } | null = null;
 let dragOffset = { x: 0, y: 0 };
 let pointerStart = { x: 0, y: 0 };
 let lastFrame = performance.now();
@@ -40,12 +42,16 @@ function resize(): void {
 function findAnimation(id: string): PetAnimation { return runtime.animations.find((item) => item.id === id) ?? runtime.animations[0]; }
 function animationDuration(value: PetAnimation): number { return value.frames.reduce((sum, frame) => sum + frame.durationMs, 0); }
 
+function switchAnimation(next: PetAnimation, now = performance.now()): void {
+  animation = next;
+  animationStarted = now;
+  document.documentElement.dataset.animation = animation.id;
+}
+
 function showIdle(): void {
   currentRequest = null;
   currentEndsAt = Number.POSITIVE_INFINITY;
-  animation = findAnimation("idle");
-  animationStarted = performance.now();
-  document.documentElement.dataset.animation = animation.id;
+  switchAnimation(findAnimation("idle"));
 }
 
 function settleCurrentActivity(now = performance.now()): void {
@@ -58,8 +64,7 @@ function settleCurrentActivity(now = performance.now()): void {
 function startAction(request: QueuedAction): void {
   settleCurrentActivity();
   currentRequest = request;
-  animation = findAnimation(request.actionId);
-  animationStarted = performance.now();
+  switchAnimation(findAnimation(request.actionId));
   currentEndsAt = animation.loop ? animationStarted + request.durationSeconds * 1_000 : animationStarted + animationDuration(animation);
   document.documentElement.dataset.animation = animation.id;
 }
@@ -90,6 +95,18 @@ function loadImage(src: string): HTMLImageElement {
   const image = new Image(); image.crossOrigin = "anonymous"; image.src = src; extensionImages.set(src, image); return image;
 }
 
+function frameReady(frame: PetFrame): boolean {
+  if (!frame.src) return atlas.complete;
+  const image = loadImage(frame.src);
+  return image.complete && image.naturalWidth > 0;
+}
+
+function drawPetFrame(frame: PetFrame, x: number, y: number, width: number, height: number): void {
+  if (!frameReady(frame)) return;
+  if (frame.src) context.drawImage(loadImage(frame.src), x, y, width, height);
+  else context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, x, y, width, height);
+}
+
 function recordRule(rule: ActionRule, now: number): void {
   rule.lastTriggeredAt = now;
   void window.everby.recordActionRuleTrigger(rule.id, now);
@@ -102,12 +119,14 @@ function requestClickAction(): void {
 function requestEvent(signal: PetActionSignal): void {
   const now = Date.now();
   const available = new Set(runtime.animations.map((item) => item.id));
-  const rule = selectEventRule(runtime.actionRules, { event: signal.event, intent: signal.intent }, available, now);
+  const profile = runtime.actionProfiles.find((item) => item.mode === runtime.actionMode.mode) ?? runtime.actionProfiles[0];
+  const stateAction = selectProfileEventAction(profile, signal.event, available);
+  const rule = stateAction ? null : selectEventRule(runtime.actionRules, { event: signal.event, intent: signal.intent }, available, now);
   if (rule) recordRule(rule, now);
-  const fallback = signal.event === "pet_click" ? "wave" : chooseAnimation(signal.intent ?? "idle", runtime.animations);
+  const fallback = signal.event === "pet_click" ? "interaction" : chooseAnimation(signal.intent ?? "idle", runtime.animations);
   const source = signal.source === "system" ? "system" : signal.source;
   const priority = actionPriority(source);
-  requestAction({ type: "play", actionId: rule?.actionId ?? fallback, source, priority, durationSeconds: rule?.durationSeconds ?? 8, ruleId: rule?.id, triggeredAt: rule ? now : undefined });
+  requestAction({ type: "play", actionId: stateAction?.actionId ?? rule?.actionId ?? fallback, source, priority, durationSeconds: stateAction?.durationSeconds ?? rule?.durationSeconds ?? 8, ruleId: rule?.id, triggeredAt: rule ? now : undefined });
 }
 
 function scheduleBackground(): void {
@@ -127,8 +146,7 @@ function draw(now: number): void {
   if (!runtime || !animation || !atlas.complete) { requestAnimationFrame(draw); return; }
   if (currentRequest && now >= currentEndsAt) finishAction();
   scheduleBackground();
-  const index = frameAtTime(animation.frames, now - animationStarted, animation.loop);
-  const frame = animation.frames[index];
+  const frame = animation.frames[frameAtTime(animation.frames, now - animationStarted, animation.loop)];
   const scale = runtime.settings.scale;
   const width = frame.width * scale;
   const height = frame.height * scale;
@@ -138,10 +156,7 @@ function draw(now: number): void {
   y = Math.max(0, Math.min(innerHeight - height, y));
   speechBubble.style.left = `${Math.max(8, Math.min(innerWidth - 268, x - 50))}px`;
   speechBubble.style.top = `${Math.max(8, y - speechBubble.offsetHeight - 10)}px`;
-  if (frame.src) {
-    const image = loadImage(frame.src);
-    if (image.complete) context.drawImage(image, x, y, width, height);
-  } else context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, x, y, width, height);
+  drawPetFrame(frame, x, y, width, height);
   requestAnimationFrame(draw);
 }
 
@@ -160,22 +175,57 @@ function isOpaque(clientX: number, clientY: number): boolean {
 }
 
 canvas.addEventListener("pointermove", (event) => {
-  if (dragging) { x = event.clientX - dragOffset.x; y = event.clientY - dragOffset.y; return; }
-  window.everby.setPetInteractive(isOpaque(event.clientX, event.clientY));
+  if (pressedPointer?.id === event.pointerId) {
+    const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
+    if (!dragging && shouldStartPetDrag(pressedPointer.button, moved)) {
+      dragging = true;
+      requestAction({ actionId: "drag", source: "drag", priority: 100, durationSeconds: 60 });
+    }
+    if (dragging) { x = event.clientX - dragOffset.x; y = event.clientY - dragOffset.y; }
+    return;
+  }
+  const opaque = isOpaque(event.clientX, event.clientY);
+  canvas.style.cursor = opaque ? "pointer" : "default";
+  window.everby.setPetInteractive(opaque);
 });
-canvas.addEventListener("pointerleave", () => { if (!dragging) window.everby.setPetInteractive(false); });
+canvas.addEventListener("pointerleave", () => { if (!pressedPointer) window.everby.setPetInteractive(false); });
 canvas.addEventListener("pointerdown", (event) => {
-  if (!isOpaque(event.clientX, event.clientY)) return;
-  dragging = true; pointerStart = { x: event.clientX, y: event.clientY }; dragOffset = { x: event.clientX - x, y: event.clientY - y };
-  canvas.setPointerCapture(event.pointerId); requestAction({ actionId: "drag", source: "drag", priority: 100, durationSeconds: 60 });
+  if (event.button !== 0 || !isOpaque(event.clientX, event.clientY)) return;
+  event.preventDefault();
+  pressedPointer = { id: event.pointerId, button: event.button };
+  pointerStart = { x: event.clientX, y: event.clientY };
+  dragOffset = { x: event.clientX - x, y: event.clientY - y };
+  canvas.setPointerCapture(event.pointerId);
 });
 canvas.addEventListener("pointerup", (event) => {
-  if (!dragging) return;
-  dragging = false; canvas.releasePointerCapture(event.pointerId); void window.everby.savePetPosition(x, y);
+  if (pressedPointer?.id !== event.pointerId) return;
   const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
-  settleCurrentActivity(); currentRequest = null;
-  if (moved < 8) { requestClickAction(); void window.everby.openChat(); } else finishAction();
+  const intent = classifyPetPointer(pressedPointer.button, moved);
+  pressedPointer = null;
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (intent === "drag") {
+    dragging = false;
+    void window.everby.savePetPosition(x, y);
+    settleCurrentActivity(); currentRequest = null; finishAction();
+  } else if (intent === "interact") requestClickAction();
 });
+canvas.addEventListener("pointercancel", (event) => {
+  if (pressedPointer?.id !== event.pointerId) return;
+  pressedPointer = null;
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (dragging) { dragging = false; settleCurrentActivity(); currentRequest = null; finishAction(); }
+});
+canvas.addEventListener("contextmenu", (event) => {
+  if (!isOpaque(event.clientX, event.clientY) || classifyPetPointer(2, 0) !== "chat") return;
+  event.preventDefault();
+  void window.everby.openChat();
+});
+
+function preloadExtensionFrames(value: PetRuntime): void {
+  for (const item of value.animations) for (const frame of item.frames) {
+    if (frame.src && !extensionImages.has(frame.src)) void loadImage(frame.src).decode().catch(() => undefined);
+  }
+}
 
 async function applyRuntime(next: PetRuntime): Promise<void> {
   const previous = runtime;
@@ -183,6 +233,7 @@ async function applyRuntime(next: PetRuntime): Promise<void> {
   const modeChanged = previous?.actionMode.mode !== next.actionMode.mode;
   const currentStillAvailable = !animation || next.animations.some((item) => item.id === animation.id);
   runtime = next; x = runtime.settings.x ?? innerWidth - 240; y = runtime.settings.y ?? innerHeight - 230;
+  preloadExtensionFrames(next);
   if (petChanged) {
     atlas = new Image(); atlas.crossOrigin = "anonymous"; atlas.src = runtime.sheetUrl; await atlas.decode();
     const offscreen = document.createElement("canvas"); offscreen.width = atlas.naturalWidth; offscreen.height = atlas.naturalHeight;

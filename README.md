@@ -13,6 +13,7 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - Daily 的九组透明逐帧动画，包括专属的电脑敲代码动作
 - OpenAI Chat Completions 兼容接口，支持流式回复、取消、超时和有限重试
 - LangChain `create_agent` 与 LangGraph 状态图负责对话、工具循环、短期 checkpoint 和能力降级
+- 对话图在生成前分析本轮响应目标，生成后经过质量门；自我介绍、重复称呼与空泛陪伴话术会被确定性修复或进入受控重写节点，再持久化到会话
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
 - SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
@@ -31,7 +32,7 @@ pnpm agent:test
 pnpm dev
 ```
 
-首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。Everby 只读扫描 `~/.petdex/pets`，不会修改外部角色的安装目录或原始资源。
+首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。点击页面上的“导入角色”按钮即可安装 Petdex 角色文件夹或 `.zip` 压缩包（格式要求见 [docs/pet-format.md](docs/pet-format.md)），导入后立即生效并自动切换；也可以手动把角色目录放入 `~/.petdex/pets` 后重启。Everby 不会修改外部角色目录中的已有内容。
 
 ### 从 SoulDesk 升级
 
@@ -104,7 +105,9 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理常态、专注、休息三种状态的时间预算、动作权重、事件优先级和回退。事件规则支持点击、对话语义与提醒；专注和休息可从陪伴页或托盘启动计时。仓库附带的 `examples/motions/daily-routines.soulmotion` 会为 Daily 首次自动安装，也可以通过设置页手动导入其他扩展。
+角色格式（目录结构、pet.json、8×9 图集网格）见 [docs/pet-format.md](docs/pet-format.md)。仓库还附带两个 ZCode agent skills:[`skills/everby-pet-install`](skills/everby-pet-install/SKILL.md)（校验、适配并安装 Petdex 角色包）与 [`skills/everby-pet-from-image`](skills/everby-pet-from-image/SKILL.md)（从参考图生成新角色）。把它们复制或链接到 `~/.zcode/skills/` 或本仓库的 `.zcode/skills/` 后即可被 ZCode 自动发现。
+
+后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理状态时间预算、动作权重、事件优先级和回退。默认只有不可删除的“常规”状态，用户可以创建带独立时长、背景动作池以及点击、对话、提醒动作的自定义状态。左键点击桌宠播放互动动作，左键移动用于拖拽，右键打开聊天。仓库附带的 `examples/motions/daily-routines.soulmotion` 会为 Daily 首次自动安装，也可以通过设置页手动导入其他扩展。
 
 ## 打包
 
@@ -121,7 +124,7 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Win
 
 ## 数据与隐私
 
-应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆、工作流和 checkpoint 表；Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
+应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆和工作流状态；LangGraph checkpoint 使用同目录下独立的 `.checkpoints` SQLite 文件，避免工具写入与节点存档争抢业务数据库写锁。Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
 
 锁屏、暂停和免打扰期间不会触发主动模型调用。前台应用感知可以随时在“隐私”页面关闭。
 

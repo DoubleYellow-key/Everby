@@ -2,7 +2,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { PetSummary } from "../../src/shared/contracts";
 
-const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+export const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 
 export interface CatalogPet extends Omit<PetSummary, "sheetUrl"> {
   directory: string;

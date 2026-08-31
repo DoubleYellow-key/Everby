@@ -25,6 +25,7 @@ describe("action playback queue", () => {
     expect(shouldInterruptAction("reminder")).toBe(false);
     expect(shouldInterruptAction("conversation", "state")).toBe(true);
     expect(shouldInterruptAction("pet_click", "state")).toBe(true);
+    expect(shouldInterruptAction("pet_click", "pet_click")).toBe(true);
     expect(shouldInterruptAction("preview", "conversation")).toBe(true);
     expect(shouldInterruptAction("reminder", "conversation")).toBe(false);
     expect(shouldInterruptAction("preview", "drag")).toBe(false);

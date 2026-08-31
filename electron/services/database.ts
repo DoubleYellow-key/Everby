@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_SETTINGS } from "../../src/core/codex-atlas";
-import type { ActionMode, ActionModeSession, ActionProfile, ActionRule, AppSettings, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionRuleInput } from "../../src/shared/contracts";
+import type { ActionMode, ActionModeSession, ActionProfile, ActionRule, AppSettings, CreateActionProfileInput, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionProfileInput, UpdateActionRuleInput } from "../../src/shared/contracts";
 
 export const DEFAULT_MODEL: ModelSettings = { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", temperature: 0.7, configured: false };
 export const DEFAULT_EMBEDDING: EmbeddingSettings = { baseUrl: "https://api.openai.com/v1", model: "text-embedding-3-small", configured: false };
@@ -43,10 +43,18 @@ export class AppDatabase {
         items_json TEXT NOT NULL, fallback_action_id TEXT NOT NULL, updated_at INTEGER NOT NULL,
         PRIMARY KEY(pet_id, mode)
       );
+      CREATE TABLE IF NOT EXISTS action_profiles_v3_archive (
+        archive_id TEXT PRIMARY KEY, pet_id TEXT NOT NULL, profile_json TEXT NOT NULL, archived_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS action_mode_sessions (
         pet_id TEXT PRIMARY KEY, mode TEXT NOT NULL, source TEXT NOT NULL, started_at INTEGER NOT NULL, ends_at INTEGER
       );
     `);
+    const profileColumns = this.db.prepare("PRAGMA table_info(action_profiles)").all() as Array<{ name: string }>;
+    if (!profileColumns.some((column) => column.name === "name")) this.db.exec("ALTER TABLE action_profiles ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+    if (!profileColumns.some((column) => column.name === "action_duration_seconds")) this.db.exec("ALTER TABLE action_profiles ADD COLUMN action_duration_seconds INTEGER NOT NULL DEFAULT 15");
+    if (!profileColumns.some((column) => column.name === "default_duration_minutes")) this.db.exec("ALTER TABLE action_profiles ADD COLUMN default_duration_minutes INTEGER NOT NULL DEFAULT 0");
+    if (!profileColumns.some((column) => column.name === "event_actions_json")) this.db.exec("ALTER TABLE action_profiles ADD COLUMN event_actions_json TEXT NOT NULL DEFAULT '{}'");
   }
 
   close(): void { this.db.close(); }
@@ -136,30 +144,50 @@ export class AppDatabase {
   }
 
   listActionProfiles(petId: string): ActionProfile[] {
-    return this.db.prepare("SELECT pet_id AS petId, mode, activity_ratio AS activityRatio, strategy, items_json AS itemsJson, fallback_action_id AS fallbackActionId, updated_at AS updatedAt FROM action_profiles WHERE pet_id = ? ORDER BY CASE mode WHEN 'normal' THEN 0 WHEN 'focus' THEN 1 ELSE 2 END")
+    return this.db.prepare("SELECT pet_id AS petId, mode, name, activity_ratio AS activityRatio, strategy, items_json AS itemsJson, fallback_action_id AS fallbackActionId, action_duration_seconds AS actionDurationSeconds, default_duration_minutes AS defaultDurationMinutes, event_actions_json AS eventActionsJson, updated_at AS updatedAt FROM action_profiles WHERE pet_id = ? ORDER BY CASE mode WHEN 'normal' THEN 0 ELSE 1 END, updated_at")
       .all(petId).map((row: any) => {
-        const { itemsJson, ...fields } = row;
-        return { ...fields, items: JSON.parse(itemsJson) } as ActionProfile;
+        const { itemsJson, eventActionsJson, ...fields } = row;
+        const legacyName = row.mode === "normal" ? "常规" : row.mode === "focus" ? "专注" : row.mode === "rest" ? "休息" : "自定义状态";
+        return { ...fields, name: row.name || legacyName, items: JSON.parse(itemsJson), eventActions: JSON.parse(eventActionsJson) } as ActionProfile;
       });
   }
 
   saveActionProfile(profile: ActionProfile): ActionProfile {
-    this.db.prepare("INSERT INTO action_profiles(pet_id,mode,activity_ratio,strategy,items_json,fallback_action_id,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(pet_id,mode) DO UPDATE SET activity_ratio=excluded.activity_ratio,strategy=excluded.strategy,items_json=excluded.items_json,fallback_action_id=excluded.fallback_action_id,updated_at=excluded.updated_at")
-      .run(profile.petId, profile.mode, profile.activityRatio, profile.strategy, JSON.stringify(profile.items), profile.fallbackActionId, profile.updatedAt);
+    this.db.prepare("INSERT INTO action_profiles(pet_id,mode,name,activity_ratio,strategy,items_json,fallback_action_id,action_duration_seconds,default_duration_minutes,event_actions_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pet_id,mode) DO UPDATE SET name=excluded.name,activity_ratio=excluded.activity_ratio,strategy=excluded.strategy,items_json=excluded.items_json,fallback_action_id=excluded.fallback_action_id,action_duration_seconds=excluded.action_duration_seconds,default_duration_minutes=excluded.default_duration_minutes,event_actions_json=excluded.event_actions_json,updated_at=excluded.updated_at")
+      .run(profile.petId, profile.mode, profile.name, profile.activityRatio, profile.strategy, JSON.stringify(profile.items), profile.fallbackActionId, profile.actionDurationSeconds, profile.defaultDurationMinutes, JSON.stringify(profile.eventActions), profile.updatedAt);
     return this.listActionProfiles(profile.petId).find((item) => item.mode === profile.mode)!;
+  }
+
+  createActionProfile(petId: string, input: CreateActionProfileInput, now = Date.now()): ActionProfile {
+    const profile: ActionProfile = { petId, mode: `state-${randomUUID()}`, ...input, updatedAt: now };
+    return this.saveActionProfile(profile);
+  }
+
+  updateActionProfile(petId: string, mode: ActionMode, patch: UpdateActionProfileInput, now = Date.now()): ActionProfile {
+    const current = this.listActionProfiles(petId).find((profile) => profile.mode === mode);
+    if (!current) throw new Error("状态不存在");
+    return this.saveActionProfile({ ...current, ...patch, name: mode === "normal" ? "常规" : patch.name, defaultDurationMinutes: mode === "normal" ? 0 : patch.defaultDurationMinutes, updatedAt: now });
+  }
+
+  deleteActionProfile(petId: string, mode: ActionMode): boolean {
+    if (mode === "normal") throw new Error("常规状态不能删除");
+    this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ? AND mode = ?").run(petId, mode);
+    return Number(this.db.prepare("DELETE FROM action_profiles WHERE pet_id = ? AND mode = ?").run(petId, mode).changes) > 0;
   }
 
   getActionMode(petId: string, now = Date.now()): ActionModeSession {
     const row = this.db.prepare("SELECT pet_id AS petId, mode, source, started_at AS startedAt, ends_at AS endsAt FROM action_mode_sessions WHERE pet_id = ?").get(petId) as ActionModeSession | undefined;
-    if (!row || (row.endsAt !== null && row.endsAt <= now)) {
+    const exists = row?.mode === "normal" || this.listActionProfiles(petId).some((profile) => profile.mode === row?.mode);
+    if (!row || !exists || (row.endsAt !== null && row.endsAt <= now)) {
       if (row) this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ?").run(petId);
       return { petId, mode: "normal", source: "system", startedAt: now, endsAt: null };
     }
     return row;
   }
 
-  startActionMode(petId: string, mode: Exclude<ActionMode, "normal">, durationMinutes: number, source: "manual" | "conversation", now = Date.now()): ActionModeSession {
-    const session: ActionModeSession = { petId, mode, source, startedAt: now, endsAt: now + durationMinutes * 60_000 };
+  startActionMode(petId: string, mode: ActionMode, durationMinutes: number, source: "manual" | "conversation", now = Date.now()): ActionModeSession {
+    if (mode === "normal" || !this.listActionProfiles(petId).some((profile) => profile.mode === mode)) throw new Error("状态不存在");
+    const session: ActionModeSession = { petId, mode, source, startedAt: now, endsAt: durationMinutes > 0 ? now + durationMinutes * 60_000 : null };
     this.db.prepare("INSERT INTO action_mode_sessions(pet_id,mode,source,started_at,ends_at) VALUES(?,?,?,?,?) ON CONFLICT(pet_id) DO UPDATE SET mode=excluded.mode,source=excluded.source,started_at=excluded.started_at,ends_at=excluded.ends_at")
       .run(petId, mode, source, now, session.endsAt);
     return session;
@@ -172,11 +200,6 @@ export class AppDatabase {
 
   migrateActionSystemV3(petId: string, rules: CreateActionRuleInput[], profiles: ActionProfile[], now = Date.now()): boolean {
     if (this.getInitializationVersion(`action-system:${petId}`) >= 3) {
-      if (this.getInitializationVersion(`focus-seated:${petId}`) < 1) {
-        const focus = this.listActionProfiles(petId).find((profile) => profile.mode === "focus");
-        if (focus?.activityRatio === 0.7 && focus.items[0]?.actionId === "daily-focus-cycle") this.saveActionProfile({ ...focus, activityRatio: 0.9, updatedAt: now });
-        this.setInitializationVersion(`focus-seated:${petId}`, 1);
-      }
       return false;
     }
     this.db.exec("BEGIN IMMEDIATE");
@@ -189,13 +212,60 @@ export class AppDatabase {
       for (const rule of rules) this.createActionRule(petId, rule, now);
       for (const profile of profiles) this.saveActionProfile({ ...profile, petId, updatedAt: now });
       this.setJson(`initialization:action-system:${petId}`, { version: 3 });
-      this.setInitializationVersion(`focus-seated:${petId}`, 1);
       this.db.exec("COMMIT");
       return true;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  migrateActionStatesV1(petId: string, normal: ActionProfile, now = Date.now()): boolean {
+    const marker = `action-states:${petId}`;
+    if (this.getInitializationVersion(marker) >= 1) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const profile of this.listActionProfiles(petId)) {
+        this.db.prepare("INSERT OR IGNORE INTO action_profiles_v3_archive(archive_id,pet_id,profile_json,archived_at) VALUES(?,?,?,?)")
+          .run(`${petId}:${profile.mode}`, petId, JSON.stringify(profile), now);
+      }
+      this.db.prepare("DELETE FROM action_profiles WHERE pet_id = ?").run(petId);
+      this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ?").run(petId);
+      this.saveActionProfile({ ...normal, petId, mode: "normal", name: "常规", defaultDurationMinutes: 0, updatedAt: now });
+      this.setInitializationVersion(marker, 1);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  archivedActionProfileCount(petId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM action_profiles_v3_archive WHERE pet_id = ?").get(petId) as { count: number }).count);
+  }
+
+  migrateClickInteractionV1(petId: string, now = Date.now()): boolean {
+    const marker = `click-interaction:${petId}`;
+    if (this.getInitializationVersion(marker) >= 1) return false;
+    const legacy = this.listActionRules(petId).find((rule) =>
+      rule.name === "点击时欢呼"
+      && rule.actionId === "daily-cheer-combo"
+      && rule.durationSeconds === 4
+      && rule.trigger.event === "pet_click"
+      && rule.trigger.probability === 0.65
+      && rule.trigger.cooldownSeconds === 12
+    );
+    if (legacy) {
+      this.updateActionRule(petId, legacy.id, {
+        name: "点击互动",
+        actionId: "interaction",
+        durationSeconds: 3,
+        trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 0 }
+      }, now);
+    }
+    this.setInitializationVersion(marker, 1);
+    return true;
   }
 
   archivedActionRuleCount(petId: string): number {

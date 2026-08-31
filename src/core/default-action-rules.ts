@@ -7,8 +7,8 @@ export const DAILY_GREETING_ACTION_RULE: CreateActionRuleInput = {
 
 export const DAILY_DEFAULT_ACTION_RULES: CreateActionRuleInput[] = [
   {
-    name: "点击时欢呼", actionId: "daily-cheer-combo", enabled: true, durationSeconds: 4,
-    trigger: { type: "event", event: "pet_click", probability: 0.65, cooldownSeconds: 12 }
+    name: "点击互动", actionId: "interaction", enabled: true, durationSeconds: 3,
+    trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 0 }
   },
   DAILY_GREETING_ACTION_RULE,
   {

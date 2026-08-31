@@ -1,6 +1,11 @@
-import type { ActionIntent, ActionRule, ActionRuleEvent } from "../shared/contracts";
+import type { ActionIntent, ActionProfile, ActionRule, ActionRuleEvent } from "../shared/contracts";
 
 export interface ActionRuleEventInput { event: ActionRuleEvent; intent?: ActionIntent }
+
+export function selectProfileEventAction(profile: ActionProfile | undefined, event: ActionRuleEvent, availableActionIds: ReadonlySet<string>) {
+  const binding = profile?.eventActions[event];
+  return binding && availableActionIds.has(binding.actionId) ? binding : null;
+}
 
 function eventMatches(rule: ActionRule, input: ActionRuleEventInput): boolean {
   if (!rule.enabled || rule.trigger.event !== input.event) return false;

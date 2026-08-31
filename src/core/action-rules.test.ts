@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ActionRule } from "../shared/contracts";
-import { selectEventRule } from "./action-rules";
+import type { ActionProfile, ActionRule } from "../shared/contracts";
+import { selectEventRule, selectProfileEventAction } from "./action-rules";
 
 function eventRule(overrides: Partial<ActionRule> = {}): ActionRule {
   return {
@@ -15,6 +15,16 @@ describe("event action rules", () => {
   const base = eventRule({
     id: "event-1", actionId: "wave", updatedAt: 100,
     trigger: { type: "event", event: "conversation_intent", intent: "greet", probability: 1, cooldownSeconds: 60 }
+  });
+
+  it("prefers an available event action from the active state", () => {
+    const profile: ActionProfile = {
+      petId: "daily", mode: "state-12345678", name: "工作", activityRatio: 0.8, strategy: "fixed",
+      items: [{ actionId: "working", weight: 1 }], fallbackActionId: "working", actionDurationSeconds: 90,
+      defaultDurationMinutes: 45, eventActions: { pet_click: { actionId: "impatient", durationSeconds: 3 } }, updatedAt: 0
+    };
+    expect(selectProfileEventAction(profile, "pet_click", new Set(["impatient"]))).toEqual({ actionId: "impatient", durationSeconds: 3 });
+    expect(selectProfileEventAction(profile, "pet_click", new Set(["working"]))).toBeNull();
   });
 
   it("matches an available conversation intent after cooldown", () => {

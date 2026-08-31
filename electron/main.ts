@@ -8,8 +8,7 @@ import {
   type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle
 } from "electron";
 import { createCodexRuntime } from "../src/core/codex-atlas";
-import { automaticModeForIntent } from "../src/core/action-director";
-import { actionModeSchema, actionProfilePatchSchema, startActionModeSchema } from "../src/core/action-profile-schema";
+import { actionModeSchema, actionProfilePatchSchema, createActionProfileSchema, startActionModeSchema } from "../src/core/action-profile-schema";
 import { defaultActionProfiles } from "../src/core/action-profiles";
 import { DAILY_DEFAULT_ACTION_RULES } from "../src/core/default-action-rules";
 import { createActionRuleSchema, updateActionRuleSchema } from "../src/core/action-rule-schema";
@@ -18,6 +17,7 @@ import { AppDatabase } from "./services/database";
 import { migrateSoulDeskUserData } from "./services/brand-migration";
 import { MotionService } from "./services/motion-service";
 import { discoverPets, type CatalogPet } from "./services/pet-catalog";
+import { installPet } from "./services/pet-installer";
 import { PythonAgentClient } from "./services/python-agent";
 import { SecretStore } from "./services/secret-store";
 
@@ -274,13 +274,6 @@ function validIntent(value: unknown): ActionIntent {
 
 async function dispatchActionIntent(intentValue: unknown, source: PetActionSource, event: PetActionSignal["event"] = "conversation_intent"): Promise<void> {
   const intent = validIntent(intentValue);
-  const petId = database.getActivePetId();
-  const mode = database.getActionMode(petId);
-  const automaticMode = source === "conversation" ? automaticModeForIntent(mode.mode, intent) : null;
-  if (automaticMode) {
-    await setActionMode(automaticMode.mode, automaticMode.durationMinutes, "conversation");
-    return;
-  }
   const signalSource = source === "pet_click" || source === "conversation" || source === "reminder" ? source : "system";
   sendAll("pet:action", { type: "event", event, intent, source: signalSource } satisfies PetActionSignal);
 }
@@ -317,11 +310,11 @@ async function runChat(requestId: string, content: string): Promise<void> {
   } finally { clearTimeout(timeout); requests.delete(requestId); }
 }
 
-async function installMotionForPet(path: string, petId: string): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
-  const baseIds = new Set(["idle", "run-right", "run-left", "wave", "jump", "failed", "stretch", "working", "review"]);
+async function installMotionForPet(path: string, petId: string, enabled = true): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
+  const baseIds = new Set(["idle", "run-right", "run-left", "wave", "jump", "failed", "stretch", "working", "review", "interaction", "impatient", "acknowledge", "double-wave", "deep-review"]);
   if (petId === "daily") baseIds.add("drag");
   const installed = await motionService.install(path, baseIds, petId);
-  const summary = { packId: installed.manifest.packId, version: installed.manifest.version, name: installed.manifest.name, targetPetId: installed.manifest.targetPetId, enabled: true, animationCount: installed.manifest.animations.length };
+  const summary = { packId: installed.manifest.packId, version: installed.manifest.version, name: installed.manifest.name, targetPetId: installed.manifest.targetPetId, enabled, animationCount: installed.manifest.animations.length };
   database.saveMotionPack(summary, installed.path);
   return summary;
 }
@@ -333,27 +326,31 @@ async function installMotion(path: string): Promise<ReturnType<AppDatabase["list
 }
 
 async function initializeActionSystem(): Promise<void> {
-  if (!database.listMotionPacks("daily").some((pack) => pack.packId === "daily-routines")) {
+  const dailyRoutines = database.listMotionPacks("daily").find((pack) => pack.packId === "daily-routines");
+  if (!dailyRoutines || dailyRoutines.version === "1.0.0") {
     const archive = app.isPackaged
       ? join(process.resourcesPath, "motion-examples", "daily-routines.soulmotion")
       : join(app.getAppPath(), "examples/motions/daily-routines.soulmotion");
-    await installMotionForPet(archive, "daily");
+    await installMotionForPet(archive, "daily", dailyRoutines?.enabled ?? true);
   }
   for (const petId of new Set(["daily", database.getActivePetId()])) {
     database.migrateActionSystemV3(petId, DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles(petId));
+    database.migrateClickInteractionV1(petId);
+    database.migrateActionStatesV1(petId, defaultActionProfiles(petId)[0]);
   }
   scheduleActionModeExpiry(database.getActionMode(database.getActivePetId()));
 }
 
 function refreshTrayMenu(): void {
   if (!tray) return;
-  const mode = database.getActionMode(database.getActivePetId());
+  const petId = database.getActivePetId();
+  const mode = database.getActionMode(petId);
+  const customStates = database.listActionProfiles(petId).filter((profile) => profile.mode !== "normal");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "打开对话", click: openChat },
     { label: "设置", click: () => createManagerWindow() },
     { type: "separator" },
-    { label: "专注模式", submenu: [25, 45, 60].map((minutes) => ({ label: `${minutes} 分钟`, click: () => void setActionMode("focus", minutes, "manual") })) },
-    { label: "休息模式", submenu: [5, 10, 15].map((minutes) => ({ label: `${minutes} 分钟`, click: () => void setActionMode("rest", minutes, "manual") })) },
+    { label: "切换状态", enabled: customStates.length > 0, submenu: customStates.map((profile) => ({ label: profile.name, click: () => void setActionMode(profile.mode, "manual") })) },
     { label: "结束当前模式", enabled: mode.mode !== "normal", click: () => void stopActionMode() },
     { type: "separator" },
     { label: "退出 Everby", click: () => app.quit() }
@@ -372,10 +369,13 @@ function scheduleActionModeExpiry(session: ActionModeSession): void {
   }, Math.max(1, session.endsAt - Date.now()));
 }
 
-async function setActionMode(mode: "focus" | "rest", durationMinutes: number, source: "manual" | "conversation"): Promise<ActionModeSession> {
-  const session = database.startActionMode(database.getActivePetId(), mode, durationMinutes, source);
+async function setActionMode(mode: string, source: "manual" | "conversation"): Promise<ActionModeSession> {
+  const petId = database.getActivePetId();
+  const profile = database.listActionProfiles(petId).find((item) => item.mode === mode);
+  if (!profile || profile.mode === "normal") throw new Error("状态不存在");
+  const session = database.startActionMode(petId, mode, profile.defaultDurationMinutes, source);
   scheduleActionModeExpiry(session);
-  sendAll("pet:speech", mode === "focus" ? `进入专注模式，陪你工作 ${durationMinutes} 分钟。` : `进入休息模式，先放松 ${durationMinutes} 分钟。`);
+  sendAll("pet:speech", profile.defaultDurationMinutes > 0 ? `已进入${profile.name}，持续 ${profile.defaultDurationMinutes} 分钟。` : `已进入${profile.name}。`);
   refreshTrayMenu();
   await broadcast();
   return session;
@@ -400,13 +400,23 @@ function registerIpc(): void {
     for (const controller of requests.values()) controller.abort();
     database.setActivePetId(id);
     database.migrateActionSystemV3(id, DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles(id));
+    database.migrateClickInteractionV1(id);
+    database.migrateActionStatesV1(id, defaultActionProfiles(id)[0]);
     await configureAgent();
     scheduleActionModeExpiry(database.getActionMode(id));
     refreshTrayMenu();
     await broadcast();
   });
-  ipcMain.handle("window:open-chat", (event) => { trusted(event); openChat(); });
-  ipcMain.handle("window:open-manager", (event) => { trusted(event); createManagerWindow(); });
+  ipcMain.handle("pet:import", async (event) => {
+    trusted(event);
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "openDirectory"], filters: [{ name: "Everby 角色包", extensions: ["zip"] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const installed = await installPet(result.filePaths[0], petdexRoot());
+    await refreshPetCatalog();
+    await broadcast();
+    return petCatalog.find((pet) => pet.id === installed.id) ?? null;
+  });
+  ipcMain.handle("window:open-chat", (event) => { trusted(event); openChat(); });  ipcMain.handle("window:open-manager", (event) => { trusted(event); createManagerWindow(); });
   ipcMain.on("pet:interactive", (event, interactive: unknown) => { trusted(event); if (typeof interactive !== "boolean") return; petWindow?.setIgnoreMouseEvents(!interactive, { forward: true }); });
   ipcMain.handle("pet:position", async (event, x: unknown, y: unknown) => { trusted(event); if (typeof x !== "number" || typeof y !== "number") throw new Error("位置无效"); database.updateSettings({ x, y }); await broadcast(); });
   ipcMain.handle("settings:update", async (event, patch: Partial<AppSettings>) => {
@@ -453,10 +463,21 @@ function registerIpc(): void {
   });
   ipcMain.handle("action-profile:update", async (event, mode: unknown, patch: unknown) => {
     trusted(event); const petId = database.getActivePetId(); const selectedMode = actionModeSchema.parse(mode); const value = actionProfilePatchSchema.parse(patch);
-    const profile = database.saveActionProfile({ petId, mode: selectedMode, ...value, updatedAt: Date.now() }); await broadcast(); return profile;
+    const catalog = await motionCatalog(); const ids = new Set(catalog.actions.map((action) => action.id));
+    if (![value.fallbackActionId, ...value.items.map((item) => item.actionId), ...Object.values(value.eventActions).map((binding) => binding.actionId)].every((id) => ids.has(id))) throw new Error("状态引用了不可用动作");
+    const profile = database.updateActionProfile(petId, selectedMode, value); refreshTrayMenu(); await broadcast(); return profile;
+  });
+  ipcMain.handle("action-profile:create", async (event, input: unknown) => {
+    trusted(event); const value = createActionProfileSchema.parse(input); const catalog = await motionCatalog(); const ids = new Set(catalog.actions.map((action) => action.id));
+    if (![value.fallbackActionId, ...value.items.map((item) => item.actionId), ...Object.values(value.eventActions).map((binding) => binding.actionId)].every((id) => ids.has(id))) throw new Error("状态引用了不可用动作");
+    const profile = database.createActionProfile(database.getActivePetId(), value); refreshTrayMenu(); await broadcast(); return profile;
+  });
+  ipcMain.handle("action-profile:delete", async (event, mode: unknown) => {
+    trusted(event); const petId = database.getActivePetId(); database.deleteActionProfile(petId, actionModeSchema.parse(mode));
+    scheduleActionModeExpiry(database.getActionMode(petId)); refreshTrayMenu(); await broadcast();
   });
   ipcMain.handle("action-mode:start", async (event, input: unknown) => {
-    trusted(event); const value = startActionModeSchema.parse(input); return setActionMode(value.mode, value.durationMinutes, "manual");
+    trusted(event); const value = startActionModeSchema.parse(input); return setActionMode(value.mode, "manual");
   });
   ipcMain.handle("action-mode:stop", async (event) => { trusted(event); return stopActionMode(); });
   ipcMain.handle("todo:create", async (event, input: unknown) => { trusted(event); const todo = await agent.createTodo(database.getActivePetId(), todoCreateSchema.parse(input)); await broadcast(); return todo; });

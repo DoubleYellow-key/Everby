@@ -1,10 +1,7 @@
-import type { ActionIntent, ActionMode, ActionProfile, PetActionRequest, PetActionSource, PetAnimation } from "../shared/contracts";
+import type { ActionMode, ActionProfile, PetActionRequest, PetActionSource, PetAnimation } from "../shared/contracts";
 
 const priorities: Record<PetActionSource, number> = { drag: 100, preview: 90, reminder: 80, conversation: 70, pet_click: 60, system: 50, state: 10 };
 export function actionPriority(source: PetActionSource): number { return priorities[source]; }
-export function automaticModeForIntent(mode: ActionMode, intent: ActionIntent): { mode: "rest"; durationMinutes: 10 } | null {
-  return mode === "normal" && intent === "tired" ? { mode: "rest", durationMinutes: 10 } : null;
-}
 
 export interface DirectorSnapshot {
   mode: ActionMode;
@@ -24,9 +21,9 @@ export interface DirectorTickInput {
   random?: () => number;
 }
 
-function durationSeconds(animation: PetAnimation, mode: ActionMode): number {
+function durationSeconds(animation: PetAnimation, profile: ActionProfile): number {
   if (!animation.loop) return animation.frames.reduce((sum, frame) => sum + frame.durationMs, 0) / 1_000;
-  return mode === "focus" ? 180 : mode === "rest" ? 12 : 15;
+  return profile.actionDurationSeconds;
 }
 
 function chooseWeighted(profile: ActionProfile, available: Map<string, PetAnimation>, state: DirectorSnapshot, now: number, random: () => number): PetAnimation | null {
@@ -54,7 +51,7 @@ export function createDirectorState(now = 0): DirectorSnapshot {
 }
 
 export function switchDirectorMode(state: DirectorSnapshot, mode: ActionMode, profile: ActionProfile, now: number): DirectorSnapshot {
-  const immediateDuration = mode === "focus" ? 180 : mode === "rest" ? 12 : 0;
+  const immediateDuration = mode === "normal" ? 0 : profile.actionDurationSeconds;
   return {
     ...state, mode, updatedAt: now, nextEligibleAt: now,
     budgetSeconds: mode === "normal" ? 0 : Math.max(state.budgetSeconds, immediateDuration * (1 - profile.activityRatio))
@@ -73,7 +70,7 @@ export function tickDirector(state: DirectorSnapshot, input: DirectorTickInput):
   const available = new Map(input.animations.filter((item) => item.enabled !== false).map((item) => [item.id, item]));
   const animation = chooseWeighted(input.profile, available, state, input.now, input.random ?? Math.random);
   if (!animation || animation.id === "idle") return { state: next, request: null };
-  const duration = durationSeconds(animation, input.profile.mode);
+  const duration = durationSeconds(animation, input.profile);
   if (accrued < duration * (1 - input.profile.activityRatio)) return { state: next, request: null };
   next = {
     ...next,

@@ -18,5 +18,8 @@ export function enqueueAction(queue: readonly QueuedAction[], request: QueuedAct
 }
 
 export function shouldInterruptAction(source: ActionRequestSource, currentSource?: ActionRequestSource): boolean {
-  return source === "drag" || currentSource === "state" && source !== "state" || source === "preview" && currentSource !== "drag";
+  return source === "drag"
+    || currentSource === "state" && source !== "state"
+    || source === "preview" && currentSource !== "drag"
+    || source === "pet_click" && currentSource === "pet_click";
 }

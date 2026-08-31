@@ -5,6 +5,9 @@
   margin: -8px 0 28px;
 }
 
+.pet-import-row { display: flex; align-items: center; gap: 14px; margin: -2px 0 18px; }
+.pet-import-row small { font-size: 12px; color: var(--muted); }
+
 .pet-option {
   min-height: 68px;
   padding: 8px;

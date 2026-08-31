@@ -27,6 +27,16 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
     for (let index = 3; index < data.length; index += 64) if (data[index] > 0) count += 1;
     return count;
   })).toBeGreaterThan(50);
+  const petPoint = await pet!.evaluate(() => ({ x: innerWidth - 144, y: innerHeight - 126 }));
+  await pet!.mouse.click(petPoint.x, petPoint.y, { button: "left" });
+  await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("interaction");
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+    .find((window) => window.webContents.getURL().endsWith("chat.html"))?.isVisible())).toBe(false);
+  await pet!.mouse.click(petPoint.x, petPoint.y, { button: "right" });
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+    .find((window) => window.webContents.getURL().endsWith("chat.html"))?.isVisible())).toBe(true);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+    .find((window) => window.webContents.getURL().endsWith("chat.html"))?.hide());
   if (screenshots) {
     await mkdir(join(process.cwd(), "test-results"), { recursive: true });
     await manager!.screenshot({ path: join(process.cwd(), "test-results/manager.png") });
@@ -67,13 +77,23 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
     await manager!.getByRole("tab", { name: "扩展包" }).click();
     await expect(manager!.getByText("Daily 日常动作组合", { exact: true })).toBeVisible();
     await manager!.getByRole("tab", { name: "事件规则" }).click();
-    await expect(manager!.getByText("点击时欢呼", { exact: true })).toBeVisible();
+    await expect(manager!.getByText("点击互动", { exact: true })).toBeVisible();
     await expect(manager!.getByText("打招呼时挥手", { exact: true })).toBeVisible();
     await expect(manager!.getByText("疲劳时舒展", { exact: true })).toBeVisible();
     await manager!.getByRole("tab", { name: "状态模式" }).click();
-    await expect(manager!.getByText("常态", { exact: true })).toBeVisible();
-    await expect(manager!.getByLabel("常态目标活跃度")).toHaveValue("25");
+    await expect(manager!.getByText("常规", { exact: true })).toBeVisible();
+    await expect(manager!.getByLabel("常规目标活跃度")).toHaveValue("25");
+    await manager!.getByLabel("新状态名称").fill("工作");
+    await manager!.getByRole("button", { name: "新建状态" }).click();
+    const workEditor = manager!.locator(".mode-editor").filter({ has: manager!.getByLabel("工作状态名称") });
+    await expect(workEditor).toBeVisible();
+    await workEditor.getByLabel("工作点击桌宠动作").selectOption("impatient");
+    await workEditor.getByRole("button", { name: "保存状态" }).click();
     await manager!.getByRole("tab", { name: "动作库" }).click();
+    await expect(manager!.getByRole("option", { name: /点头确认/ })).toBeVisible();
+    await manager!.getByRole("option", { name: /点头确认/ }).click();
+    await manager!.getByRole("button", { name: "播放 点头确认" }).click();
+    await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("acknowledge");
     await manager!.getByRole("option", { name: /欢呼组合/ }).click();
     await expect.poll(() => manager!.locator(".motion-preview-canvas").evaluate((canvas: HTMLCanvasElement) => {
       const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -97,29 +117,36 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
     await manager!.getByRole("tab", { name: "事件规则" }).click();
     const unavailableRules = manager!.getByText("动作不可用，规则不会执行");
     await expect(unavailableRules.first()).toBeVisible();
-    expect(await unavailableRules.count()).toBeGreaterThanOrEqual(6);
+    expect(await unavailableRules.count()).toBeGreaterThanOrEqual(5);
     await manager!.getByRole("tab", { name: "扩展包" }).click();
     await manager!.getByRole("switch", { name: "启用 Daily 日常动作组合" }).click();
     await manager!.getByRole("button", { name: "陪伴" }).click();
-    await manager!.getByRole("button", { name: "25 分钟" }).click();
-    await expect.poll(() => manager!.evaluate(() => window.everby.getSnapshot().then((value) => value.actionMode.mode))).toBe("focus");
-    await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("daily-focus-cycle");
-    await manager!.evaluate(() => window.everby.createTodo({ title: "专注状态刷新测试" }));
+    await manager!.getByRole("button", { name: "工作", exact: true }).click();
+    await expect.poll(() => manager!.evaluate(() => window.everby.getSnapshot().then((value) => value.actionMode.mode))).toMatch(/^state-/);
+    await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("working");
+    await pet!.mouse.click(petPoint.x, petPoint.y, { button: "left" });
+    await expect.poll(() => pet!.evaluate(() => document.documentElement.dataset.animation)).toBe("impatient");
+    await manager!.evaluate(() => window.everby.createTodo({ title: "工作状态刷新测试" }));
     await pet!.waitForTimeout(250);
-    await expect(pet!.evaluate(() => document.documentElement.dataset.animation)).resolves.toBe("daily-focus-cycle");
-    await manager!.getByRole("button", { name: "提前结束" }).click();
+    await expect(manager!.evaluate(() => window.everby.getSnapshot().then((value) => value.actionMode.mode))).resolves.toMatch(/^state-/);
+    await manager!.getByRole("button", { name: "结束状态" }).click();
     await expect.poll(() => manager!.evaluate(() => window.everby.getSnapshot().then((value) => value.actionMode.mode))).toBe("normal");
     await manager!.getByRole("button", { name: "动作" }).click();
     await manager!.getByRole("tab", { name: "状态模式" }).click();
-    await expect(manager!.getByLabel("专注目标活跃度")).toHaveValue("90");
+    await expect(manager!.getByLabel("工作目标活跃度")).toHaveValue("70");
     await manager!.screenshot({ path: join(process.cwd(), "test-results/motions.png") });
+    manager!.once("dialog", (dialog) => void dialog.accept());
+    await manager!.locator(".mode-editor").filter({ has: manager!.getByLabel("工作状态名称") }).getByRole("button", { name: "删除状态" }).click();
+    await expect(manager!.getByLabel("工作状态名称")).toHaveCount(0);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+      .find((window) => window.webContents.getURL().endsWith("chat.html"))?.showInactive());
     await chat!.screenshot({ path: join(process.cwd(), "test-results/chat.png") });
     await pet!.screenshot({ path: join(process.cwd(), "test-results/pet.png"), omitBackground: true });
   }
 }
 
 test("launches manager, chat and the Daily companion", async () => {
-  test.setTimeout(45_000);
+  test.setTimeout(60_000);
   const userData = join(process.cwd(), "test-results/user-data-installed");
   await rm(userData, { recursive: true, force: true });
   const app = await electron.launch({ args: ["."], cwd: process.cwd(), env: { ...process.env, EVERBY_E2E: "1", EVERBY_E2E_USER_DATA: userData } });

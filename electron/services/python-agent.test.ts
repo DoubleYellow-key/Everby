@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 import { PythonAgentClient } from "./python-agent";
 
 function testDatabase(name: string): string { return join(process.cwd(), "agent", "tests", `.${name}.db`); }
-async function cleanup(path: string): Promise<void> { await Promise.all(["", "-wal", "-shm"].map((suffix) => rm(path + suffix, { force: true }))); }
+async function cleanup(path: string): Promise<void> {
+  await Promise.all([path, `${path}-wal`, `${path}-shm`, `${path}.checkpoints`, `${path}.checkpoints-wal`, `${path}.checkpoints-shm`]
+    .map((candidate) => rm(candidate, { force: true })));
+}
 
 describe("PythonAgentClient protocol v2", () => {
   it("starts the Python runtime and reports protocol v2 health", async () => {

@@ -59,3 +59,6 @@ resources/pets/
 ._*
 Thumbs.db
 Desktop.ini
+
+# ZCode local tooling 
+.zcode/
