@@ -12,7 +12,7 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - Daily 与本地角色切换，每个角色拥有独立人设、对话记录和记忆
 - Daily 的九组透明逐帧动画，包括专属的电脑敲代码动作
 - OpenAI Chat Completions 兼容接口，支持流式回复、取消、超时和有限重试
-- LangChain `create_agent` 与 LangGraph 状态图负责对话、工具循环、短期 checkpoint 和能力降级
+- LangChain `create_agent` 与 LangGraph 状态图负责对话、工具循环、短期 checkpoint 和能力降级；每次模型配置后自动探测流式、工具与向量能力
 - 对话图在生成前分析本轮响应目标，生成后经过质量门；自我介绍、重复称呼与空泛陪伴话术会被确定性修复或进入受控重写节点，再持久化到会话
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
@@ -36,7 +36,7 @@ pnpm dev
 
 ### 从 SoulDesk 升级
 
-Everby 是 SoulDesk 的新名称。首次启动 Everby 时，应用会将旧 `SoulDesk` 用户目录中的数据库、加密凭据和动作扩展复制到新的 Everby 数据目录，并将 `souldesk.db` 升级为 `everby.db`；已有数据不会被覆盖。新的资源协议与环境变量分别使用 `everby://` 和 `EVERBY_*`，旧 `souldesk://` 与 `SOULDESK_*` 入口暂时保留兼容。已有 `.soulmotion` 动作扩展无需重新打包。
+Everby 是 SoulDesk 的新名称。首次启动 Everby 时，应用会将旧 `SoulDesk` 用户目录中的数据库、加密凭据和动作扩展复制到新的 Everby 数据目录，并将 `souldesk.db` 升级为 `everby.db`。旧消息、计划、人设与摘要会事务化迁移到新表，迁移前生成备份且原表保持不变。新的资源协议与环境变量分别使用 `everby://` 和 `EVERBY_*`，旧 `souldesk://` 与 `SOULDESK_*` 入口暂时保留兼容。已有 `.soulmotion` 动作扩展无需重新打包。
 
 ## 配置模型
 
@@ -72,7 +72,8 @@ flowchart LR
     IPC --> MAIN["Electron 主进程"]
     MAIN --> SECRET["safeStorage"]
     MAIN --> AGENT["Python sidecar"]
-    AGENT --> DB["SQLite / checkpoint / FTS / vectors"]
+    AGENT --> DB["SQLite 业务数据 / FTS / vectors"]
+    AGENT --> CHECKPOINT["独立 LangGraph checkpoint 库"]
     AGENT --> MODEL["OpenAI 兼容 API / Ollama"]
     MAIN --> MOTION["本地 ActionDirector"]
     MOTION --> UI
@@ -124,7 +125,7 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Win
 
 ## 数据与隐私
 
-应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆和工作流状态；LangGraph checkpoint 使用同目录下独立的 `.checkpoints` SQLite 文件，避免工具写入与节点存档争抢业务数据库写锁。Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
+应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆与工作流数据，并使用同目录的独立 SQLite 文件保存 LangGraph checkpoint，避免与业务写入争抢锁；Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
 
 锁屏、暂停和免打扰期间不会触发主动模型调用。前台应用感知可以随时在“隐私”页面关闭。
 

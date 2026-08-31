@@ -1,3 +1,5 @@
+import json
+import sqlite3
 import unittest
 import uuid
 from pathlib import Path
@@ -6,8 +8,10 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
+from everby_agent.graph.companion import ReplyStreamHandler
 from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository
+from everby_agent.persistence.migration import migrate_legacy_data
 from everby_agent.persona import build_persona_context, suppress_unsolicited_self_intro
 from everby_agent.runtime import checkpoint_database_path
 from everby_agent.schemas.protocol import RpcRequest
@@ -17,7 +21,7 @@ from everby_agent.workflows.scheduler import AgentScheduler
 
 class ProtocolV2Tests(unittest.TestCase):
     def test_checkpoint_database_is_isolated_from_domain_writes(self):
-        self.assertEqual(checkpoint_database_path(Path("everby.db")), Path("everby.db.checkpoints"))
+        self.assertEqual(checkpoint_database_path(Path("everby.db")), Path("everby-checkpoints.db"))
 
     def test_rejects_incompatible_protocol(self):
         with self.assertRaises(ValidationError):
@@ -26,6 +30,24 @@ class ProtocolV2Tests(unittest.TestCase):
     def test_accepts_protocol_v2(self):
         request = RpcRequest.model_validate({"id": "1", "protocolVersion": 2, "method": "agent.snapshot", "params": {}})
         self.assertEqual(request.protocol_version, 2)
+
+
+class ReplyStreamHandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hides_internal_summaries_and_split_text_tool_markers(self):
+        events: list[str] = []
+        handler = ReplyStreamHandler(lambda _event, data, _request_id: events.append(data["delta"]), "request")
+        await handler.on_chat_model_start({}, [[]], run_id="summary", metadata={"lc_source": "summarization"})
+        await handler.on_llm_new_token("内部摘要", run_id="summary")
+        await handler.on_llm_end(None, run_id="summary")
+        await handler.on_llm_new_token("正常回复", run_id="reply")
+        self.assertEqual(events, ["正常回复"])
+
+        marker_handler = ReplyStreamHandler(lambda _event, data, _request_id: events.append(data["delta"]), "request")
+        await marker_handler.on_llm_new_token(" ", run_id="tool")
+        await marker_handler.on_llm_new_token("<|FunctionCall", run_id="tool")
+        await marker_handler.on_llm_new_token("Begin|>", run_id="tool")
+        self.assertTrue(marker_handler.blocked)
+        self.assertEqual(events, ["正常回复"])
 
 
 class AgentRepositoryTests(unittest.TestCase):
@@ -72,6 +94,30 @@ class AgentRepositoryTests(unittest.TestCase):
         self.repo.add_message("daily", "user", "First", created_at=1_000)
         self.repo.add_message("daily", "assistant", "Second", created_at=1_000)
         self.assertEqual([item["content"] for item in self.repo.list_messages("daily")], ["First", "Second"])
+
+    def test_migrates_legacy_messages_todos_persona_and_summary_without_deleting_source_rows(self):
+        self.repo.close()
+        connection = sqlite3.connect(self.path)
+        connection.executescript("""
+        CREATE TABLE messages(id TEXT PRIMARY KEY, pet_id TEXT, role TEXT, content TEXT, created_at INTEGER);
+        CREATE TABLE todos(id TEXT PRIMARY KEY, title TEXT, notes TEXT, due_at INTEGER, remind_at INTEGER,
+          repeat_rule TEXT, source TEXT, created_at INTEGER, updated_at INTEGER, completed_at INTEGER, last_reminded_at INTEGER);
+        CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT);
+        """)
+        connection.execute("INSERT INTO messages VALUES('m1','daily','user','旧消息',1000)")
+        connection.execute("INSERT INTO todos VALUES('t1','旧计划','备注',2000,1500,'none','chat',900,1000,NULL,NULL)")
+        connection.execute("INSERT INTO kv VALUES('persona:daily',?)", (json.dumps({"petId": "daily", "name": "旧 Daily", "speakingStyle": "简洁"}),))
+        connection.execute("INSERT INTO kv VALUES('memory:daily',?)", (json.dumps({"summary": "旧摘要", "unsummarized": 2}),))
+        connection.commit(); connection.close()
+
+        self.repo = AgentRepository(self.path)
+        self.assertTrue(migrate_legacy_data(self.repo))
+        self.assertEqual(self.repo.list_messages("daily")[0]["content"], "旧消息")
+        self.assertEqual(self.repo.list_todos("daily")[0]["title"], "旧计划")
+        self.assertEqual(self.repo.get_persona("daily")["name"], "旧 Daily")
+        self.assertIn("旧摘要", [item["content"] for item in self.repo.list_memories("daily")])
+        self.assertEqual(self.repo.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+        self.assertEqual(self.repo.db.execute("SELECT COUNT(*) FROM todos").fetchone()[0], 1)
 
     def test_hybrid_memory_search_uses_fts_and_vector_results(self):
         self.repo.remember("daily", "preference", "The user likes jasmine tea", vector=[1.0, 0.0], confidence=0.9)
@@ -140,6 +186,38 @@ class MemoryFilterTests(unittest.TestCase):
 
 
 class SchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_presence_features_respect_settings_quiet_hours_and_context(self):
+        path = Path(__file__).parent / f".scheduler-presence-{uuid.uuid4()}.db"
+        repo = AgentRepository(path)
+        events: list[tuple[str, dict]] = []
+        prompts: list[dict] = []
+
+        async def compose_presence(kind: str, _pet_id: str, context: dict) -> str:
+            prompts.append({"kind": kind, **context})
+            return "Code 里的计划该看看啦" if kind == "task_review" else "休息一下吧"
+
+        try:
+            repo.create_todo("daily", "临近计划", due_at=2_000)
+            scheduler = AgentScheduler(repo, lambda event, data, request_id: events.append((event, data)), compose_presence=compose_presence)
+            scheduler.update_presence("daily", {
+                "remindersEnabled": True, "proactiveEnabled": True, "taskAssistantEnabled": True,
+                "quietHoursStart": "23:00", "quietHoursEnd": "08:00"
+            }, "active", "Code", now=1_000)
+            await scheduler.run_presence_once(now=3_601_000, local_minutes=12 * 60)
+            await scheduler.run_presence_once(now=3_606_000, local_minutes=12 * 60)
+            self.assertEqual({item["kind"] for item in prompts}, {"task_review", "proactive"})
+            self.assertTrue(all(item["activeAppName"] == "Code" for item in prompts))
+            self.assertNotIn("Code", repo.list_messages("daily")[0]["content"])
+
+            prompts.clear()
+            await scheduler.run_presence_once(now=7_200_000, local_minutes=23 * 60 + 30)
+            self.assertEqual(prompts, [])
+        finally:
+            repo.close()
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(str(path) + suffix)
+                if candidate.exists(): candidate.unlink()
+
     async def test_reminder_uses_composed_copy_without_a_duplicate_pet_action(self):
         path = Path(__file__).parent / f".scheduler-{uuid.uuid4()}.db"
         repo = AgentRepository(path)

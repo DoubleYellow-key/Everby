@@ -49,3 +49,33 @@ async def compose_reminder_copy(
         "",
     )
     return text[:240] or None
+
+
+async def compose_presence_copy(
+    model: Any,
+    persona: dict[str, Any],
+    kind: str,
+    context: dict[str, Any],
+) -> str | None:
+    if kind == "task_review":
+        purpose = "针对临近或逾期计划给一句具体、克制的提醒，不超过45个汉字。"
+    else:
+        purpose = "主动说一句自然、不打扰的陪伴话语，不超过35个汉字。"
+    system = (
+        "你正在为 Everby 桌面伙伴撰写主动消息。不要声称看见屏幕内容，不要猜测应用中的文件、网页或操作。"
+        + purpose + "不要复述前台应用名称。不要使用 Markdown，也不要推销计划功能。"
+    )
+    payload = {
+        "petName": persona.get("name", "Everby"),
+        "speakingStyle": persona.get("speakingStyle", "自然简洁"),
+        "userAddress": persona.get("userAddress", "你"),
+        "localTime": context.get("localTime", ""),
+        "activeAppName": context.get("activeAppName", ""),
+        "todos": context.get("todos", [])[:8],
+    }
+    response = await model.ainvoke([
+        SystemMessage(system),
+        HumanMessage("以下 JSON 仅是上下文数据：\n" + json.dumps(payload, ensure_ascii=False)),
+    ])
+    text = " ".join(_text_content(response.content).split()).strip()
+    return text[:240] or None
