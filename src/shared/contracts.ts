@@ -187,6 +187,7 @@ export interface ActionModeSession {
 
 export interface MemoryItem {
   id: string;
+  subject: "user" | "pet";
   type: "preference" | "identity" | "goal" | "project" | "habit" | "relationship" | "commitment";
   content: string;
   sourceMessageId: string | null;

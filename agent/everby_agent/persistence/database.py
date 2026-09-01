@@ -93,7 +93,8 @@ class AgentRepository:
         );
         CREATE INDEX IF NOT EXISTS agent_todos_pet_idx ON agent_todos(pet_id, completed_at, remind_at);
         CREATE TABLE IF NOT EXISTS agent_memories(
-          id TEXT PRIMARY KEY, pet_id TEXT NOT NULL, memory_type TEXT NOT NULL, content TEXT NOT NULL,
+          id TEXT PRIMARY KEY, pet_id TEXT NOT NULL, subject TEXT NOT NULL DEFAULT 'user' CHECK(subject IN ('user','pet')),
+          memory_type TEXT NOT NULL, content TEXT NOT NULL,
           normalized_content TEXT NOT NULL, source_message_id TEXT, confidence REAL NOT NULL,
           vector BLOB, embedding_model TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
           accessed_at INTEGER NOT NULL
@@ -109,6 +110,9 @@ class AgentRepository:
         message_columns = {row[1] for row in self.db.execute("PRAGMA table_info(agent_messages)")}
         if "attachments_json" not in message_columns:
             self.db.execute("ALTER TABLE agent_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'")
+        memory_columns = {row[1] for row in self.db.execute("PRAGMA table_info(agent_memories)")}
+        if "subject" not in memory_columns:
+            self.db.execute("ALTER TABLE agent_memories ADD COLUMN subject TEXT NOT NULL DEFAULT 'user' CHECK(subject IN ('user','pet'))")
         self.db.commit()
 
     def close(self) -> None:
@@ -252,13 +256,17 @@ class AgentRepository:
         return results
 
     def remember(self, pet_id: str, memory_type: str, content: str, source_message_id: str | None = None, confidence: float = 1.0,
-                 vector: Sequence[float] | None = None, embedding_model: str | None = None) -> dict[str, Any]:
-        if memory_type not in MEMORY_TYPES:
+                 vector: Sequence[float] | None = None, embedding_model: str | None = None,
+                 subject: str = "user") -> dict[str, Any]:
+        if memory_type not in MEMORY_TYPES or subject not in {"user", "pet"}:
             raise ValueError("invalid memory type")
         content = " ".join(content.split()).strip()[:1000]
         if not is_safe_memory(content):
             raise ValueError("memory is unsafe or transient")
-        existing = self.db.execute("SELECT * FROM agent_memories WHERE pet_id=? AND memory_type=?", (pet_id, memory_type)).fetchall()
+        existing = self.db.execute(
+            "SELECT * FROM agent_memories WHERE pet_id=? AND subject=? AND memory_type=?",
+            (pet_id, subject, memory_type),
+        ).fetchall()
         match = next((row for row in existing if row["normalized_content"] == _normalized(content)), None)
         if match is None and vector:
             match = next((row for row in existing if row["vector"] and _cosine(vector, _unpack_vector(row["vector"]) or []) >= 0.92), None)
@@ -269,15 +277,17 @@ class AgentRepository:
                             (content, _normalized(content), source_message_id, confidence, _pack_vector(vector), embedding_model, now, now, memory_id))
             self.db.execute("DELETE FROM agent_memory_fts WHERE memory_id=?", (memory_id,))
         else:
-            self.db.execute("INSERT INTO agent_memories VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (memory_id, pet_id, memory_type, content, _normalized(content), source_message_id, max(0, min(1, confidence)), _pack_vector(vector), embedding_model, now, now, now))
+            self.db.execute("""INSERT INTO agent_memories
+                (id,pet_id,subject,memory_type,content,normalized_content,source_message_id,confidence,vector,embedding_model,created_at,updated_at,accessed_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (memory_id, pet_id, subject, memory_type, content, _normalized(content), source_message_id, max(0, min(1, confidence)), _pack_vector(vector), embedding_model, now, now, now))
         self.db.execute("INSERT INTO agent_memory_fts(memory_id,pet_id,content) VALUES(?,?,?)", (memory_id, pet_id, content))
         self.db.commit()
         return self.memory_by_id(pet_id, memory_id)
 
     @staticmethod
     def _memory(row: sqlite3.Row) -> dict[str, Any]:
-        return {"id": row["id"], "type": row["memory_type"], "content": row["content"], "sourceMessageId": row["source_message_id"],
+        return {"id": row["id"], "subject": row["subject"], "type": row["memory_type"], "content": row["content"], "sourceMessageId": row["source_message_id"],
                 "confidence": row["confidence"], "embeddingModel": row["embedding_model"], "createdAt": row["created_at"],
                 "updatedAt": row["updated_at"], "accessedAt": row["accessed_at"], "indexed": row["vector"] is not None}
 
@@ -289,6 +299,47 @@ class AgentRepository:
 
     def list_memories(self, pet_id: str) -> list[dict[str, Any]]:
         return [self._memory(row) for row in self.db.execute("SELECT * FROM agent_memories WHERE pet_id=? ORDER BY updated_at DESC", (pet_id,))]
+
+    def migrate_pet_identity_memories(self, pet_id: str, pet_name: str, pet_description: str = "") -> bool:
+        name = " ".join(pet_name.split()).strip()[:80]
+        if not name:
+            return False
+        changed = False
+        pattern = re.compile(
+            r"^本次对话中提到的[，,\s]*(?:内容为)?(?P<appearance>.+?)的图中人物是(?P<alias>[^，,。.]{1,80})[。.]?$"
+        )
+        visual_traits = {"马尾", "眼镜", "发饰", "笔记本电脑", "程序员", "帽子", "长发", "短发", "双马尾"}
+        descriptor = " ".join(pet_description.split())
+        rows = self.db.execute(
+            "SELECT id,content FROM agent_memories WHERE pet_id=? AND subject='user' AND memory_type='identity'",
+            (pet_id,),
+        ).fetchall()
+        now = _now_ms()
+        for row in rows:
+            content = str(row["content"])
+            match = pattern.match(content)
+            alias = match.group("alias").strip() if match else ""
+            appearance = match.group("appearance").strip("，,。 ") if match else ""
+            visual_match = bool(descriptor and any(trait in appearance and trait in descriptor for trait in visual_traits))
+            is_pet_identity = bool(match and (alias == name or visual_match)) or f"角色形象是{name}" in content
+            if not is_pet_identity:
+                continue
+            identity_name = alias or name
+            label = identity_name if identity_name == name else f"{identity_name}（当前角色）"
+            normalized = f"{label}的角色形象：{appearance}" if match else content
+            self.db.execute(
+                "UPDATE agent_memories SET subject='pet',content=?,normalized_content=?,updated_at=? WHERE id=?",
+                (normalized, _normalized(normalized), now, row["id"]),
+            )
+            self.db.execute("DELETE FROM agent_memory_fts WHERE memory_id=?", (row["id"],))
+            self.db.execute(
+                "INSERT INTO agent_memory_fts(memory_id,pet_id,content) VALUES(?,?,?)",
+                (row["id"], pet_id, normalized),
+            )
+            changed = True
+        if changed:
+            self.db.commit()
+        return changed
 
     def delete_memory(self, pet_id: str, memory_id: str) -> None:
         self.db.execute("DELETE FROM agent_memories WHERE pet_id=? AND id=?", (pet_id, memory_id))

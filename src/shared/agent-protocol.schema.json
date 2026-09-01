@@ -261,6 +261,15 @@
         "title": "Id",
         "type": "string"
       },
+      "subject": {
+        "default": "user",
+        "enum": [
+          "user",
+          "pet"
+        ],
+        "title": "Subject",
+        "type": "string"
+      },
       "type": {
         "enum": [
           "preference",

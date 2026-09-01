@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
-from everby_agent.graph.companion import ReplyStreamHandler
+from everby_agent.graph.companion import ReplyStreamHandler, format_memory_context, merge_recalled_memories
 from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository, DEFAULT_PERSONA_BACKGROUND
 from everby_agent.persistence.migration import migrate_legacy_data
@@ -17,6 +17,7 @@ from everby_agent.runtime import AgentRuntime, checkpoint_database_path
 from everby_agent.schemas.protocol import RpcRequest
 from everby_agent.workflows.reminder_copy import compose_presence_copy, compose_reminder_copy
 from everby_agent.workflows.scheduler import AgentScheduler
+from everby_agent.workflows.memory_curator import build_curation_prompt
 
 
 class ProtocolV2Tests(unittest.TestCase):
@@ -169,6 +170,39 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual(first["id"], merged["id"])
         self.assertEqual(len(self.repo.list_memories("daily")), 1)
 
+    def test_migrates_legacy_visual_identity_memory_to_the_pet_subject(self):
+        legacy = self.repo.remember(
+            "doubao", "identity",
+            "本次对话中提到的，内容为扎马尾、戴黄色发饰的女孩坐在黑色背景前椅子上用笔记本电脑的图中人物是豆包",
+        )
+
+        self.assertTrue(self.repo.migrate_pet_identity_memories("doubao", "豆包"))
+
+        migrated = self.repo.memory_by_id("doubao", legacy["id"])
+        self.assertEqual(migrated["subject"], "pet")
+        self.assertEqual(
+            migrated["content"],
+            "豆包的角色形象：扎马尾、戴黄色发饰的女孩坐在黑色背景前椅子上用笔记本电脑",
+        )
+
+    def test_memory_subject_is_part_of_deduplication(self):
+        user = self.repo.remember("daily", "identity", "喜欢安静地写代码", subject="user")
+        pet = self.repo.remember("daily", "identity", "喜欢安静地写代码", subject="pet")
+        self.assertNotEqual(user["id"], pet["id"])
+
+    def test_visual_traits_can_link_a_pet_alias_to_the_current_role(self):
+        legacy = self.repo.remember(
+            "daily", "identity",
+            "本次对话中提到的，内容为扎马尾、戴黄色发饰的女孩坐在椅子上用笔记本电脑的图中人物是豆包",
+        )
+        changed = self.repo.migrate_pet_identity_memories(
+            "daily", "Daily", "一位戴细框眼镜、扎单马尾的程序员伙伴",
+        )
+        self.assertTrue(changed)
+        migrated = self.repo.memory_by_id("daily", legacy["id"])
+        self.assertEqual(migrated["subject"], "pet")
+        self.assertTrue(migrated["content"].startswith("豆包（当前角色）的角色形象："))
+
     def test_default_persona_is_neutral_without_character_defaults(self):
         persona = self.repo.get_persona("daily")
         self.assertIn("克制、自然、简洁", persona["speakingStyle"])
@@ -239,6 +273,31 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual(len(persona["boundaries"]), 2000)
 
 
+class MemoryCuratorPromptTests(unittest.TestCase):
+    def test_pet_identity_requires_user_confirmation_and_standalone_wording(self):
+        prompt = build_curation_prompt(
+            "doubao", {"name": "豆包", "background": "桌面角色"},
+            [{"id": "m1", "role": "user", "content": "图里这个就是你，豆包"}],
+        )
+        self.assertIn("subject=pet", prompt)
+        self.assertIn("当前角色“豆包”", prompt)
+        self.assertIn("必须得到用户明确确认", prompt)
+        self.assertIn("禁止写成“本次对话中提到的”", prompt)
+
+    def test_pet_memories_are_explained_as_the_agents_own_identity(self):
+        context = format_memory_context([
+            {"id": "p1", "subject": "pet", "type": "identity", "content": "豆包的角色形象：扎马尾"},
+            {"id": "u1", "subject": "user", "type": "preference", "content": "用户喜欢咖啡"},
+        ])
+        self.assertIn("这些事实描述的就是你自己", context)
+        self.assertIn("关于用户的长期记忆", context)
+
+    def test_pet_identity_is_recalled_even_when_the_query_matches_something_else(self):
+        pet = {"id": "p1", "subject": "pet", "type": "identity", "content": "豆包的角色形象"}
+        user = {"id": "u1", "subject": "user", "type": "project", "content": "用户的项目"}
+        self.assertEqual(merge_recalled_memories([user], [pet, user]), [pet, user])
+
+
 class PersonaPromptTests(unittest.TestCase):
     def test_persona_context_is_configuration_not_an_intro_request(self):
         prompt = build_persona_context({
@@ -250,6 +309,7 @@ class PersonaPromptTests(unittest.TestCase):
         })
         self.assertIn("高冷、克制、简短", prompt)
         self.assertIn("不是让你复述的开场白", prompt)
+        self.assertIn("你就是这个角色本身", prompt)
         self.assertIn("不要主动说“我是 Daily”", prompt)
 
     def test_removes_repeated_intro_unless_user_asks_for_identity(self):

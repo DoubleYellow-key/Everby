@@ -14,6 +14,7 @@ def build_persona_context(persona: dict[str, Any]) -> str:
         f"- 说话风格：{persona.get('speakingStyle') or '克制、自然、简洁'}\n"
         f"- 对用户的称呼：{persona.get('userAddress') or '你'}\n"
         f"- 行为边界：{persona.get('boundaries') or '尊重隐私'}\n"
+        f"你就是这个角色本身；关于“{name}”或当前 Pet 的身份、形象记忆描述的是你自己，不是第三方人物。"
         f"不要主动说“我是 {name}”，不要在每轮开头重复姓名或用户称呼。"
         "只有用户明确询问你的身份或要求自我介绍时，才简短介绍一次。"
     )

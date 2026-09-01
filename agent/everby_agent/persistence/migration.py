@@ -84,8 +84,10 @@ def migrate_legacy_data(repository: AgentRepository) -> bool:
                     continue
                 memory_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"everby:legacy-summary:{pet_id}"))
                 now = int(time.time() * 1000)
-                repository.db.execute("INSERT OR IGNORE INTO agent_memories VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (
-                    memory_id, pet_id or "daily", "project", summary[:1000], summary.casefold()[:1000], None,
+                repository.db.execute("""INSERT OR IGNORE INTO agent_memories
+                    (id,pet_id,subject,memory_type,content,normalized_content,source_message_id,confidence,vector,embedding_model,created_at,updated_at,accessed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    memory_id, pet_id or "daily", "user", "project", summary[:1000], summary.casefold()[:1000], None,
                     0.8, None, None, now, now, now,
                 ))
                 repository.db.execute("INSERT OR IGNORE INTO agent_memory_fts(memory_id,pet_id,content) VALUES(?,?,?)", (memory_id, pet_id or "daily", summary[:1000]))

@@ -64,6 +64,12 @@ class AgentRuntime:
         self.active_pet_persona = sanitize_persona_defaults(params.get("petPersona"))
         self.repository.migrate_legacy_persona_defaults(self.active_pet_id, self.active_pet_persona,
                                                         description=self.active_pet_description)
+        effective_persona = self.repository.get_persona(
+            self.active_pet_id, self.active_pet_name, self.active_pet_description, self.active_pet_persona,
+        )
+        identity_description = f"{self.active_pet_description} {effective_persona.get('background') or ''}"
+        for identity_name in {self.active_pet_name, str(effective_persona.get("name") or "")}:
+            self.repository.migrate_pet_identity_memories(self.active_pet_id, identity_name, identity_description)
         self.timezone = str(params.get("timezone") or "Asia/Shanghai")[:100]
         chat = params.get("chat") if isinstance(params.get("chat"), dict) else {}
         embedding = params.get("embedding") if isinstance(params.get("embedding"), dict) else {}
@@ -95,7 +101,8 @@ class AgentRuntime:
             if self.curator:
                 await self.curator.close()
             self.curator = MemoryCurator(self.require_repository(), self.chat_model,
-                                         self.embeddings.embed_query if self.embeddings else None, self.emit)
+                                         self.embeddings.embed_query if self.embeddings else None, self.emit,
+                                         self._persona_for_pet)
         elif self.curator:
             await self.curator.close()
             self.curator = None
@@ -162,6 +169,9 @@ class AgentRuntime:
         if pet_id == self.active_pet_id:
             return self.active_pet_name, self.active_pet_description, self.active_pet_persona
         return pet_id, "", {}
+
+    def _persona_for_pet(self, pet_id: str) -> dict[str, Any]:
+        return self.require_repository().get_persona(pet_id, *self._persona_defaults(pet_id))
 
     async def _compose_reminder(self, pet_id: str, todos: list[dict[str, Any]]) -> str | None:
         if not self.chat_model or self.tasks:

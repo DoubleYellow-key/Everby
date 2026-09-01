@@ -82,6 +82,9 @@ class SearchMemoryArgs(BaseModel):
 
 
 class RememberMemoryArgs(BaseModel):
+    subject: Literal["user", "pet"] = Field(
+        default="user", description="Who the fact describes: the user or the current pet itself"
+    )
     memory_type: Literal["preference", "identity", "goal", "project", "habit", "relationship", "commitment"]
     content: str = Field(min_length=8, max_length=1000)
     confidence: float = Field(default=1.0, ge=0, le=1)
@@ -161,15 +164,17 @@ def search_memories(query: str, runtime: ToolRuntime[AgentContext] = None) -> li
 
 
 @tool(args_schema=RememberMemoryArgs)
-def remember_memory(memory_type: str, content: str, confidence: float = 1.0,
+def remember_memory(memory_type: str, content: str, confidence: float = 1.0, subject: str = "user",
                     runtime: ToolRuntime[AgentContext] = None) -> dict[str, Any]:
-    """Store a durable fact only when the user explicitly asks you to remember it."""
+    """Store a durable user or current-pet fact only when the user explicitly asks you to remember it."""
     assert runtime is not None
     vector = runtime.context.embed_query(content) if runtime.context.embed_query else None
     def operation() -> dict[str, Any]:
         with runtime.context.operation_lock:
             runtime.context.claim_write()
-            return runtime.context.repository.remember(runtime.context.pet_id, memory_type, content, confidence=confidence, vector=vector)
+            return runtime.context.repository.remember(
+                runtime.context.pet_id, memory_type, content, confidence=confidence, vector=vector, subject=subject,
+            )
     return _execute(runtime, "remember_memory", operation)
 
 

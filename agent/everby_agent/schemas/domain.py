@@ -53,6 +53,7 @@ class TodoItem(BaseModel):
 class MemoryItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: str
+    subject: Literal["user", "pet"] = "user"
     type: Literal["preference", "identity", "goal", "project", "habit", "relationship", "commitment"]
     content: str
     source_message_id: str | None = Field(alias="sourceMessageId")
