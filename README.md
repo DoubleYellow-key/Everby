@@ -129,12 +129,6 @@ Codex 会设计动作 ID 和语义，从参考素材生成或整理为 192×208 
 
 三个 Skill 的边界是：创建完整角色用 `everby-pet-from-image`，安装或修复现成角色用 `everby-pet-install`，给已有角色追加动作才用 `everby-motion-pack`。所有脚本都应从 Everby 仓库根目录运行，只有校验结果为 `ok: true` 或 `motion:validate` 通过才算完成。
 
-## 从 SoulDesk 升级
-
-Everby 是 SoulDesk 的后续名称。首次启动时，如果系统应用数据目录中存在旧 `SoulDesk` 目录，而 Everby 对应文件尚不存在，应用会复制旧数据库及 WAL/SHM、聊天与 Embedding 加密凭据和动作扩展。迁移不会删除旧目录，也不会覆盖已经存在的 Everby 数据。
-
-旧的 `SOULDESK_*` 环境变量和 `souldesk://` 资源协议暂时保留兼容，新配置应使用 `EVERBY_*` 与 `everby://`。
-
 ## 配置模型
 
 在“模型”页面分别填写 OpenAI 兼容的聊天、图片理解与 Embedding 服务。三者可以使用不同地址、模型和独立加密 API Key：

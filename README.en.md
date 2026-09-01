@@ -130,12 +130,6 @@ Codex designs the animation ID and intent, generates or arranges transparent 192
 
 Use `everby-pet-from-image` to create a complete character, `everby-pet-install` to install or repair an existing character, and `everby-motion-pack` only to add animations to an existing character. Run all helper scripts from the Everby repository root. A workflow is complete only when character validation returns `ok: true` or `motion:validate` succeeds.
 
-## Upgrading from SoulDesk
-
-Everby is the successor name to SoulDesk. On first launch, if a legacy `SoulDesk` application-data directory exists and the corresponding Everby files do not, Everby copies the legacy database and WAL/SHM files, encrypted chat and embedding credentials, and animation extensions. Migration does not delete the legacy directory or overwrite existing Everby data.
-
-Legacy `SOULDESK_*` environment variables and the `souldesk://` resource protocol remain temporarily supported. New configuration should use `EVERBY_*` and `everby://`.
-
 ## Model Configuration
 
 Configure separate OpenAI-compatible chat, image-understanding, and embedding services on the **Model** page. Each can use a different endpoint, model, and encrypted API key:
