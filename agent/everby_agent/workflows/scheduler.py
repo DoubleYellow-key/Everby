@@ -75,13 +75,27 @@ class AgentScheduler:
         for item in self.repository.list_todos(self.pet_id):
             if item["completedAt"] is not None:
                 continue
-            times = [value for value in (item["dueAt"], item["remindAt"]) if value is not None]
-            if not times:
+            # Explicit reminder times belong exclusively to the deterministic reminder
+            # scheduler. Reviewing them early lets model-written copy falsely claim they fired.
+            if item["remindAt"] is not None and item["remindAt"] > now:
                 continue
-            scheduled = min(times)
+            scheduled = item["dueAt"]
+            if scheduled is None:
+                continue
             if scheduled <= now + 2 * 60 * 60_000 and not (item["lastRemindedAt"] and now - item["lastRemindedAt"] < 30 * 60_000):
                 candidates.append((scheduled, item))
         return [item for _scheduled, item in sorted(candidates, key=lambda value: value[0])[:8]]
+
+    @staticmethod
+    def _task_review_context(item: dict[str, Any], now: int) -> dict[str, Any]:
+        due_at = item["dueAt"]
+        delta = due_at - now
+        return {
+            "title": item["title"],
+            "dueAt": due_at,
+            "timing": "overdue" if delta <= 0 else "upcoming",
+            "minutesUntil": max(0, (delta + 59_999) // 60_000),
+        }
 
     async def _emit_presence(self, kind: str, todos: list[dict[str, Any]], now: int) -> bool:
         if not self.compose_presence:
@@ -89,7 +103,7 @@ class AgentScheduler:
         context = {
             "localTime": self._local_datetime(now).isoformat(),
             "activeAppName": self.active_app_name,
-            "todos": [{"title": item["title"], "dueAt": item["dueAt"], "remindAt": item["remindAt"]} for item in todos],
+            "todos": [self._task_review_context(item, now) for item in todos],
         }
         try:
             message = await asyncio.wait_for(self.compose_presence(kind, self.pet_id, context), timeout=8)

@@ -15,7 +15,7 @@ from everby_agent.persistence.migration import migrate_legacy_data
 from everby_agent.persona import build_persona_context, suppress_unsolicited_self_intro
 from everby_agent.runtime import checkpoint_database_path
 from everby_agent.schemas.protocol import RpcRequest
-from everby_agent.workflows.reminder_copy import compose_reminder_copy
+from everby_agent.workflows.reminder_copy import compose_presence_copy, compose_reminder_copy
 from everby_agent.workflows.scheduler import AgentScheduler
 
 
@@ -236,6 +236,45 @@ class MemoryFilterTests(unittest.TestCase):
 
 
 class SchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_task_review_does_not_announce_pending_reminders_early(self):
+        path = Path(__file__).parent / f".scheduler-pending-reminder-{uuid.uuid4()}.db"
+        repo = AgentRepository(path)
+        prompts: list[dict] = []
+
+        async def compose_presence(kind: str, _pet_id: str, context: dict) -> str:
+            prompts.append({"kind": kind, **context})
+            return "周报还有一小时，先记着。"
+
+        try:
+            now = 1_800_000_000_000
+            repo.create_todo("daily", "吃午饭", remind_at=now + 2 * 60 * 60_000, repeat="daily")
+            repo.db.execute(
+                "UPDATE agent_todos SET last_reminded_at=? WHERE pet_id=? AND normalized_title=?",
+                (now - 24 * 60 * 60_000, "daily", "吃午饭"),
+            )
+            repo.db.commit()
+            repo.create_todo("daily", "提交周报", due_at=now + 60 * 60_000)
+            scheduler = AgentScheduler(
+                repo, lambda _event, _data, _request_id: None, compose_presence=compose_presence,
+            )
+            scheduler.update_presence("daily", {
+                "remindersEnabled": True, "proactiveEnabled": False, "taskAssistantEnabled": True,
+                "quietHoursStart": "23:00", "quietHoursEnd": "08:00",
+            }, "active", now=now)
+
+            await scheduler.run_presence_once(now=now, local_minutes=10 * 60)
+
+            self.assertEqual(len(prompts), 1)
+            self.assertEqual([item["title"] for item in prompts[0]["todos"]], ["提交周报"])
+            self.assertEqual(prompts[0]["todos"][0]["timing"], "upcoming")
+            self.assertEqual(prompts[0]["todos"][0]["minutesUntil"], 60)
+        finally:
+            repo.close()
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(str(path) + suffix)
+                if candidate.exists():
+                    candidate.unlink()
+
     async def test_presence_features_respect_settings_quiet_hours_and_context(self):
         path = Path(__file__).parent / f".scheduler-presence-{uuid.uuid4()}.db"
         repo = AgentRepository(path)
@@ -315,6 +354,18 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReminderCopyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_replaces_false_due_claim_for_upcoming_task(self):
+        class FakeModel:
+            async def ainvoke(self, _messages):
+                return SimpleNamespace(content="到提醒时间了，该提交周报了。")
+
+        result = await compose_presence_copy(FakeModel(), {"name": "Daily"}, "task_review", {
+            "localTime": "2026-09-01T09:30:00+08:00",
+            "todos": [{"title": "提交周报", "dueAt": 1_800_000_000_000, "timing": "upcoming", "minutesUntil": 90}],
+        })
+
+        self.assertEqual(result, "“提交周报”还有约 1 小时 30 分钟，先记着。")
+
     async def test_calls_model_with_persona_and_due_items(self):
         class FakeModel:
             def __init__(self):
