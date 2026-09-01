@@ -19,8 +19,8 @@ The current release includes the original character **Daily** and can also disco
 - Python background scheduling for deterministic reminders, proactive companionship, and long-term memory curation
 - Local to-do lists, one-time or daily reminders, and low-frequency AI follow-up on upcoming tasks
 - SQLite FTS5 plus vector-based long-term memory, with separate API keys protected by Electron `safeStorage`
-- A visual animation library, normal/focus/rest modes, per-character event rules, and `.soulmotion` extension management
-- An ActionDirector that uses time budgets to control active animation ratios; focus mode favors three-minute seated work segments, while the Daily example extension, three mode profiles, and six event rules are initialized on first launch
+- A visual animation library, a default Normal mode, user-created removable modes, per-character event rules, and `.soulmotion` extension management
+- An ActionDirector that uses time budgets to control active animation ratios, with fixed or weighted animation pools, per-mode event overrides, and fallback for unavailable extension actions; the Daily example extension and six event rules are initialized on first launch
 - A yellow-and-white management UI, chat bubbles, and tray controls
 
 ## Quick Start
@@ -35,6 +35,23 @@ pnpm dev
 ```
 
 After the first launch, open the **Characters** page in the management window to switch between Daily and locally installed Petdex characters. See below for character and animation import workflows.
+
+## Basic Interaction and Customization
+
+- **Left-click** the pet to trigger the interaction assigned to the current mode. Hold and move with the left mouse button to drag it.
+- **Right-click** the pet to open chat. The tray icon can also open chat, open settings, or quit Everby.
+- The **Companion** page controls visibility, background-animation pause, proactive messages, and custom mode sessions. Pausing stops background rotation only; click, reminder, and drag feedback remain active.
+- The **Characters** page switches characters and edits the name, user address, background, speaking style, and behavior boundaries. Each character has isolated persona, conversation, plan, and memory data.
+- The **Appearance** page controls pet scale and always-on-top behavior. Dragged positions are persisted and constrained to the multi-monitor work area.
+
+The **Animations** page has four views:
+
+| View | Configuration |
+| --- | --- |
+| Animation Library | Inspect base and extension actions, including source, loop behavior, duration, and intent, then preview them on the Canvas or desktop |
+| Modes | The non-removable **Normal** mode is the only default; create custom modes with an activity ratio, fixed action or weighted pool, action duration, default session duration, and per-mode click/conversation/reminder actions |
+| Event Rules | Map click, conversation intent, or reminder events to actions with enable state, probability, cooldown, and loop duration |
+| Extension Packs | Import, enable, disable, or remove `.soulmotion` packages; disabled references are retained and recover when the package is enabled again |
 
 ## Importing Characters and Animations
 
@@ -112,6 +129,12 @@ Codex designs the animation ID and intent, generates or arranges transparent 192
 
 Use `everby-pet-from-image` to create a complete character, `everby-pet-install` to install or repair an existing character, and `everby-motion-pack` only to add animations to an existing character. Run all helper scripts from the Everby repository root. A workflow is complete only when character validation returns `ok: true` or `motion:validate` succeeds.
 
+## Upgrading from SoulDesk
+
+Everby is the successor name to SoulDesk. On first launch, if a legacy `SoulDesk` application-data directory exists and the corresponding Everby files do not, Everby copies the legacy database and WAL/SHM files, encrypted chat and embedding credentials, and animation extensions. Migration does not delete the legacy directory or overwrite existing Everby data.
+
+Legacy `SOULDESK_*` environment variables and the `souldesk://` resource protocol remain temporarily supported. New configuration should use `EVERBY_*` and `everby://`.
+
 ## Model Configuration
 
 Configure separate OpenAI-compatible chat and embedding services on the **Model** page. Embeddings use their own configuration and encrypted API key:
@@ -138,6 +161,44 @@ Use the **Plans** page to create, complete, or delete items and configure separa
 
 You can also say, "Remind me to drink water at 3 PM," "Add the weekly report to my plans," or "Mark the weekly report as complete" in chat. The Python agent exposes create and complete tools but no delete tool, and it must retrieve the exact item ID before completing one. If the model does not support tool calling, Everby falls back to companion chat while retaining memory recall.
 
+Reminder timing is determined by the Python scheduler from SQLite timestamps, never by the model. Once an item is due, the model may rewrite the copy in the character's voice; a deterministic message is used when the model is unavailable. One due event drives the system notification, pet bubble, and reminder action so chat and proactive events cannot duplicate playback. AI task review considers approaching or overdue deadlines only and does not report a separate future reminder as already due.
+
+## Agent and Memory
+
+### LangGraph Conversation Workflow
+
+Python runs the main conversation as an explicit state graph:
+
+```text
+load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
+             -> companion_agent / direct_chat
+             -> reply_quality_gate -> repair_reply / rewrite_reply
+             -> persist_turn -> select_action -> enqueue_memory_curation
+```
+
+`analyze_turn` decides whether the turn is ordinary companionship, a question, or an operation. The post-generation quality gate checks repeated introductions, repeated forms of address, generic companion copy, and claims that an operation succeeded without tool evidence. The full path uses LangChain `create_agent`, limits tool-loop recursion to 6, allows at most two writes per turn, and applies a 45-second timeout. To-do writes are idempotent by `run_id + tool_call_id`; durable facts are deduplicated by exact content or vector similarity.
+
+The model can access only six companion tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_current_time` | Return the current date, time, timezone, and timestamp in the user's timezone |
+| `list_todos` | List the current character's plans and obtain the exact ID required for completion |
+| `create_todo` | Create a plan or reminder, reusing an active duplicate title and filling missing schedule data |
+| `complete_todo` | Complete an item by exact ID; `list_todos` must run first |
+| `search_memories` | Search the current character's durable memories when automatic recall is insufficient |
+| `remember_memory` | Immediately store a durable fact only after an explicit request to remember it |
+
+There are no model tools for deleting plans or memories, file access, shell execution, application control, or arbitrary networking. Streaming, tool-calling, and embedding support are probed independently. Models without native tool calling enter `direct_chat`: companion chat and existing memory recall remain available, while the native tool loop and automatic memory curation are disabled.
+
+### Short-Term and Long-Term Memory
+
+- **Short-term memory:** each character and conversation epoch receives an isolated LangGraph thread ID persisted by `AsyncSqliteSaver` in a dedicated checkpoint database. At roughly 4,000 tokens, old context is summarized while the latest 20 messages are retained. Clearing a conversation increments the epoch without deleting long-term memory.
+- **Long-term memory:** seven structured fact types are supported: preference, identity, goal, project, habit, relationship, and commitment. An explicit "remember" request writes immediately. After a successful reply from a tool-capable model, a 30-second debounce starts asynchronous curation over the latest six messages.
+- **Safety filtering:** credentials, passwords, API keys, transient small talk, and model-inferred sensitive attributes are rejected. Facts of the same type with vector similarity of at least `0.92` are merged.
+- **Hybrid retrieval:** SQLite FTS5 and float32 vectors stored as BLOBs each contribute eight candidates. RRF with `k=60` fuses them into the top five results. If embeddings are unavailable, FTS recall remains available and chat is not blocked.
+- **Visual management:** the **Memory** page shows type, confidence, creation time, and vector index status and can delete one fact or clear all long-term memory for the current character.
+
 ## Architecture
 
 ```mermaid
@@ -155,7 +216,7 @@ flowchart LR
 
 - `electron/`: window lifecycle, IPC, secure storage, character catalog, and animation package services
 - `agent/`: Python LangChain/LangGraph agent, tools, memory, persistence, scheduling, and protocol v2
-- `src/core/`: timeline and animation-intent mapping
+- `src/core/`: ActionDirector, mode profiles, playback queue, timeline, and semantic-intent mapping
 - `src/renderer/`: desktop pet, chat, and management interfaces
 - `resources/runtime-pets/`: built-in character assets distributed with the app
 - `resources/pet-qa/`: animation contact sheets and validation results for original characters
@@ -195,7 +256,7 @@ pnpm dist:mac:x64
 pnpm dist:win
 ```
 
-PyInstaller cannot cross-compile across operating systems or architectures, so each package must be built on the matching macOS or Windows runner. The GitHub Actions workflow is located at `.github/workflows/build.yml`. The initial release does not include code signing, automatic updates, or installer notarization.
+PyInstaller cannot cross-compile across operating systems or architectures, so each package must be built on the matching runner. On every push to `main`, `.github/workflows/build.yml` verifies macOS arm64, macOS x64, and Windows x64 by running Python tests, type checking, Vitest, and packaging in sequence. The initial release does not include code signing, automatic updates, or installer notarization.
 
 ## Data and Privacy
 
@@ -208,6 +269,17 @@ Foreground application awareness is disabled by default. When enabled, Everby re
 Daily is Everby's original built-in character. Its runtime atlas and QA materials are included in this repository. View all nine animation groups in the [Daily animation contact sheet](resources/pet-qa/daily/contact-sheet.png).
 
 External character assets are not covered by Everby's license and are not copied into the source repository. Confirm the applicable asset license before contributing or publishing additional characters.
+
+## Troubleshooting
+
+- **Chat works, but plans cannot be created:** click **Probe Capabilities** on the **Model** page. Models without native tool calling run in degraded mode; switch to a compatible OpenAI-style model for the complete tool loop.
+- **An installed animation extension does not play:** verify that its `targetPetId` matches the current character, the pack is enabled, and the action works in the library preview. Event playback also requires a per-mode override or event rule.
+- **The Python sidecar does not start:** install `agent/requirements-runtime.txt` and set `EVERBY_PYTHON` to a Python 3.10+ interpreter when necessary.
+- **Character or animation import fails:** run the `everby-pet-install` validation script or `pnpm motion:validate` to see the exact atlas, manifest, or resource-path error.
+
+## Contributing
+
+Issues and pull requests are welcome. Before submitting, run at least `pnpm agent:test`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Include `pnpm test:e2e` for Electron interaction changes and a successful `pnpm motion:validate` result for `.soulmotion` changes. Character and animation assets must document their source and license; do not submit third-party IP assets without confirmed permission.
 
 ## Project Status
 

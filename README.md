@@ -19,8 +19,8 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
 - SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
-- 可视化动作库、常态/专注/休息状态模式、按角色事件规则，以及 `.soulmotion` 扩展包管理
-- 动作导演通过时间预算控制非待机占比；专注模式以三分钟坐姿工作长段为主，Daily 示例扩展、三组状态配置与六条事件规则会在首次启动时初始化
+- 可视化动作库、默认常规状态、可新增/删除的自定义状态、按角色事件规则，以及 `.soulmotion` 扩展包管理
+- 动作导演通过时间预算控制非待机占比，支持固定动作或加权动作池、状态内事件覆盖和不可用扩展动作回退；Daily 示例扩展与六条事件规则会在首次启动时初始化
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
 
 ## 快速开始
@@ -35,6 +35,23 @@ pnpm dev
 ```
 
 首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。导入新角色与动作扩展的方式见下文。
+
+## 基本交互与个性化
+
+- **左键点击**桌宠触发当前状态的互动动画；按住左键移动可拖拽桌宠。
+- **右键点击**桌宠打开聊天；托盘图标也可以打开聊天、设置或退出应用。
+- “陪伴”页可以显示/隐藏桌宠、暂停背景动作、开启主动陪伴并启动自定义状态；暂停只停止背景轮换，不影响点击、提醒和拖拽反馈。
+- “角色”页可以切换角色，并分别编辑名字、对用户的称呼、角色背景、说话风格和行为边界。每个角色独立保存人设、对话、计划和记忆。
+- “外观”页可以调整桌宠大小与始终置顶；位置会在拖拽后持久化，并适配多显示器工作区。
+
+“动作”页分为四个视图：
+
+| 视图 | 可以配置的内容 |
+| --- | --- |
+| 动作库 | 查看基础/扩展动作的来源、循环方式、时长和语义，并在 Canvas 或桌面上试播 |
+| 状态模式 | 默认只有不可删除的“常规”状态；可创建任意自定义状态，配置活跃度、固定动作或加权动作池、单次动作时长、默认持续时间，以及状态内点击/对话/提醒动作 |
+| 事件规则 | 将点击、对话语义或提醒事件映射到动作，并设置启停、触发概率、冷却时间和循环动作时长 |
+| 扩展包 | 导入、启停或卸载 `.soulmotion`；扩展停用后配置仍会保留，重新启用即可恢复 |
 
 ## 导入角色与动作
 
@@ -111,6 +128,12 @@ Codex 会设计动作 ID 和语义，从参考素材生成或整理为 192×208 
 
 三个 Skill 的边界是：创建完整角色用 `everby-pet-from-image`，安装或修复现成角色用 `everby-pet-install`，给已有角色追加动作才用 `everby-motion-pack`。所有脚本都应从 Everby 仓库根目录运行，只有校验结果为 `ok: true` 或 `motion:validate` 通过才算完成。
 
+## 从 SoulDesk 升级
+
+Everby 是 SoulDesk 的后续名称。首次启动时，如果系统应用数据目录中存在旧 `SoulDesk` 目录，而 Everby 对应文件尚不存在，应用会复制旧数据库及 WAL/SHM、聊天与 Embedding 加密凭据和动作扩展。迁移不会删除旧目录，也不会覆盖已经存在的 Everby 数据。
+
+旧的 `SOULDESK_*` 环境变量和 `souldesk://` 资源协议暂时保留兼容，新配置应使用 `EVERBY_*` 与 `everby://`。
+
 ## 配置模型
 
 在“模型”页面分别填写 OpenAI 兼容的聊天与 Embedding 服务。Embedding 使用独立配置和独立加密 API Key：
@@ -137,6 +160,44 @@ API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返
 
 也可以直接在对话中提出“下午三点提醒我喝水”“把整理周报加入计划”或“完成整理周报”。Python 智能体只暴露新增与完成工具，不提供删除工具；完成项目前必须先查询准确 ID。模型不支持工具调用时会降级为纯陪伴聊天，已有记忆召回仍可用。
 
+真正的提醒时间由 Python 调度器基于 SQLite 时间戳确定，不交给模型判断。到期后模型只负责按角色口吻润色提醒文案；模型不可用时使用确定性文案。系统通知、桌宠气泡和提醒动作由同一个到期事件触发，避免聊天结果与主动事件重复播放。AI 清单关注只处理临近或逾期的截止时间，不会把尚未到期的独立提醒误报为“时间到了”。
+
+## 智能体与记忆
+
+### LangGraph 对话工作流
+
+主对话由 Python 中的显式状态图执行：
+
+```text
+load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
+             -> companion_agent / direct_chat
+             -> reply_quality_gate -> repair_reply / rewrite_reply
+             -> persist_turn -> select_action -> enqueue_memory_curation
+```
+
+`analyze_turn` 先确定本轮是普通陪伴、回答问题还是执行操作；生成后的质量门会检查重复自我介绍、重复称呼、空泛陪伴话术和“未执行工具却声称成功”等问题。完整工具路径使用 LangChain `create_agent`，工具循环递归上限为 6，每轮最多 2 个写操作并设置 45 秒超时；待办写入以 `run_id + tool_call_id` 幂等，长期事实通过精确内容或向量相似度去重。
+
+模型只能使用六个陪伴工具：
+
+| 工具 | 用途 |
+| --- | --- |
+| `get_current_time` | 获取用户时区下的当前日期、时间和时间戳 |
+| `list_todos` | 查询当前角色的计划，并为完成操作取得准确 ID |
+| `create_todo` | 新增计划或提醒，自动复用同名未完成项并补齐缺失时间 |
+| `complete_todo` | 按准确 ID 完成计划，调用前必须先执行 `list_todos` |
+| `search_memories` | 在自动召回不足时搜索当前角色的长期记忆 |
+| `remember_memory` | 仅在用户明确要求“记住”时立即保存长期事实 |
+
+模型没有删除计划、删除记忆、文件、Shell、应用控制或任意网络工具。流式、工具调用和 Embedding 能力会分别探测；不支持原生工具调用时进入 `direct_chat`，陪伴聊天和已有记忆召回仍可用，原生工具循环与自动记忆整理会停用。
+
+### 短期与长期记忆
+
+- **短期记忆**：每个角色和会话 epoch 使用独立的 LangGraph thread ID，并由 `AsyncSqliteSaver` 保存到单独 checkpoint 数据库。上下文达到约 4,000 tokens 时自动摘要旧消息，保留最近 20 条。清空会话会递增 epoch，不会删除长期记忆。
+- **长期记忆**：包含偏好、身份、目标、项目、习惯、关系与约定七种结构化事实。明确说“记住”会立即写入；支持工具调用的模型完成回复后，会经过 30 秒防抖，从最近 6 条消息中异步整理稳定事实。
+- **安全过滤**：凭据、密码、API Key、一次性闲聊和模型推测的敏感属性不会写入长期记忆。相同类型且向量相似度达到 `0.92` 的事实会合并更新。
+- **混合检索**：SQLite FTS5 与存储为 float32 BLOB 的向量各取前 8 条，通过 RRF（`k=60`）融合后返回前 5 条；Embedding 不可用时自动保留 FTS 检索，不阻塞聊天。
+- **可视化管理**：“记忆”页显示类型、置信度、创建时间与向量索引状态，支持删除单条或清空当前角色的全部长期记忆。
+
 ## 架构
 
 ```mermaid
@@ -154,7 +215,7 @@ flowchart LR
 
 - `electron/`：窗口生命周期、IPC、安全存储、角色目录和动作包服务
 - `agent/`：Python LangChain/LangGraph 智能体、工具、记忆、持久化、调度和 protocol v2
-- `src/core/`：时间线与动作意图映射
+- `src/core/`：动作导演、状态配置、播放队列、时间线与语义意图映射
 - `src/renderer/`：桌宠、聊天和管理界面
 - `resources/runtime-pets/`：可随应用分发的内置角色资源
 - `resources/pet-qa/`：原创角色的动画检查图与验证结果
@@ -194,7 +255,7 @@ pnpm dist:mac:x64
 pnpm dist:win
 ```
 
-PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Windows runner 上构建。GitHub Actions 工作流位于 `.github/workflows/build.yml`。当前第一版不包含代码签名、自动更新和安装包公证。
+PyInstaller 不支持跨系统或跨架构编译，请在对应的 runner 上构建。`.github/workflows/build.yml` 会在推送到 `main` 时分别验证 macOS arm64、macOS x64 与 Windows x64，并依次运行 Python 测试、类型检查、Vitest 和打包。当前第一版不包含代码签名、自动更新和安装包公证。
 
 ## 数据与隐私
 
@@ -207,6 +268,17 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 macOS 或 Win
 Daily 是 Everby 的原创内置角色，其运行图集与 QA 资料保存在本仓库。完整九组动作可在 [Daily 动作检查图](resources/pet-qa/daily/contact-sheet.png) 中查看。
 
 外部角色资源不包含在 Everby 的授权范围内，也不会被复制进源码仓库。贡献或发布其他角色前，请先确认对应素材的授权范围。
+
+## 常见问题
+
+- **能聊天但不能创建计划**：在“模型”页点击“探测能力”。模型不支持原生 tool calling 时会显示降级状态；可更换支持工具调用的 OpenAI 兼容模型。
+- **动作扩展已安装但没有播放**：确认当前角色与扩展的 `targetPetId` 一致、扩展已启用，并在动作库试播；事件动作还需要加入状态覆盖或事件规则。
+- **Python sidecar 无法启动**：确认已安装 `agent/requirements-runtime.txt`，并通过 `EVERBY_PYTHON` 指向 Python 3.10+ 解释器。
+- **角色或动作包导入失败**：分别运行 `everby-pet-install` 的校验脚本或 `pnpm motion:validate` 查看具体尺寸、清单和资源路径错误。
+
+## 参与贡献
+
+欢迎通过 Issue 或 Pull Request 提交问题、功能和文档改进。提交前请至少运行 `pnpm agent:test`、`pnpm typecheck`、`pnpm test` 和 `pnpm build`；涉及 Electron 交互时补充 `pnpm test:e2e`，涉及 `.soulmotion` 时附上 `pnpm motion:validate` 结果。角色或动作素材必须说明来源与许可，不要提交无法确认授权的第三方 IP 资源。
 
 ## 当前状态
 
