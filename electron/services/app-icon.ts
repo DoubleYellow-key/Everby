@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { posix, win32 } from "node:path";
 
 export interface AppIconPathOptions {
   appPath: string;
@@ -8,8 +8,10 @@ export interface AppIconPathOptions {
 }
 
 export function resolveAppIconPath(options: AppIconPathOptions): string {
-  const extension = options.platform === "win32" ? "ico" : "png";
+  const windows = options.platform === "win32";
+  const paths = windows ? win32 : posix;
+  const extension = windows ? "ico" : "png";
   return options.isPackaged
-    ? join(options.resourcesPath, `app-icon.${extension}`)
-    : join(options.appPath, `build/icon.${extension}`);
+    ? paths.join(options.resourcesPath, `app-icon.${extension}`)
+    : paths.join(options.appPath, `build/icon.${extension}`);
 }

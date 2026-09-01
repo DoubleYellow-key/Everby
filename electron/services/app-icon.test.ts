@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { posix, resolve, win32 } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { resolveAppIconPath } from "./app-icon";
@@ -19,8 +19,15 @@ describe("Everby application icon", () => {
 
   it("uses the Windows icon in development and packaged builds", () => {
     expect(resolveAppIconPath({ appPath: "C:\\Everby", isPackaged: false, platform: "win32", resourcesPath: "C:\\resources" }))
-      .toBe(resolve("C:\\Everby", "build/icon.ico"));
+      .toBe(win32.join("C:\\Everby", "build/icon.ico"));
     expect(resolveAppIconPath({ appPath: "C:\\Everby", isPackaged: true, platform: "win32", resourcesPath: "C:\\resources" }))
-      .toBe(resolve("C:\\resources", "app-icon.ico"));
+      .toBe(win32.join("C:\\resources", "app-icon.ico"));
+  });
+
+  it("uses the PNG icon for POSIX development and packaged builds", () => {
+    expect(resolveAppIconPath({ appPath: "/opt/Everby", isPackaged: false, platform: "darwin", resourcesPath: "/opt/resources" }))
+      .toBe(posix.join("/opt/Everby", "build/icon.png"));
+    expect(resolveAppIconPath({ appPath: "/opt/Everby", isPackaged: true, platform: "linux", resourcesPath: "/opt/resources" }))
+      .toBe(posix.join("/opt/resources", "app-icon.png"));
   });
 });
