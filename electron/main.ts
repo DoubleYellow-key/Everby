@@ -123,9 +123,12 @@ function desktopBounds(): Rectangle {
 
 function createManagerWindow(): BrowserWindow {
   if (managerWindow) { managerWindow.show(); managerWindow.focus(); return managerWindow; }
+  const isMac = process.platform === "darwin";
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 900, minHeight: 620, title: "Everby",
-    backgroundColor: "#fffaf0", show: false, icon: appIconPath(),
+    backgroundColor: "#12161f", show: false, icon: appIconPath(),
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    ...(isMac ? {} : { titleBarOverlay: { color: "#12161f", symbolColor: "#edf0f6", height: 36 } }),
     webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
   window.setMenuBarVisibility(false);
