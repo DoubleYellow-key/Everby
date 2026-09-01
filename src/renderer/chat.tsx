@@ -10,6 +10,7 @@ function ChatApp(): React.JSX.Element {
   const [draft, setDraft] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
   const [attachments, setAttachments] = useState<ChatImageAttachment[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -18,19 +19,21 @@ function ChatApp(): React.JSX.Element {
     const offSnapshot = window.everby.onSnapshot(setSnapshot);
     const offDelta = window.everby.onChatDelta((event) => {
       if (event.error) setError(event.error);
+      if (event.status) setProgress(event.status);
+      if (event.delta) setProgress("");
       setDraft((value) => value + event.delta);
-      if (event.done) { setRequestId(null); setDraft(""); }
+      if (event.done) { setRequestId(null); setDraft(""); setProgress(""); }
     });
     document.documentElement.dataset.appReady = "true";
     return () => { if (typeof offSnapshot === "function") offSnapshot(); if (typeof offDelta === "function") offDelta(); };
   }, []);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [snapshot?.messages.length, draft]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [snapshot?.messages.length, draft, progress]);
 
   async function send(): Promise<void> {
     if ((!text.trim() && attachments.length === 0) || requestId) return;
-    setError(""); setDraft(""); const content = text.trim(); setText("");
-    try { setRequestId(await window.everby.sendMessage(content, attachments)); setAttachments([]); } catch (reason) { setText(content); setError(reason instanceof Error ? reason.message : "发送失败"); }
+    setError(""); setDraft(""); setProgress(attachments.length ? "正在准备图片…" : ""); const content = text.trim(); setText("");
+    try { setRequestId(await window.everby.sendMessage(content, attachments)); setAttachments([]); } catch (reason) { setText(content); setProgress(""); setError(reason instanceof Error ? reason.message : "发送失败"); }
   }
 
   async function selectImages(): Promise<void> {
@@ -69,6 +72,7 @@ function ChatApp(): React.JSX.Element {
     <section className="messages" aria-live="polite">
       {messages.length === 0 && <div className="chat-empty"><MessageCircle size={28}/><strong>现在想聊点什么？</strong><span>我会把重要的事留在本地记忆里。</span></div>}
       {messages.map((message) => <div className={`message ${message.role}`} key={message.id}>{message.attachments?.length > 0 && <div className="message-images">{message.attachments.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name}/>)}</div>}<span>{message.content}</span></div>)}
+      {progress && !draft && <div className="message assistant progress-message"><span className="progress-dot"/>{progress}</div>}
       {draft && <div className="message assistant streaming">{draft}<span className="caret"/></div>}
       {error && <div className="inline-error" role="alert">{error}</div>}
       <div ref={endRef}/>

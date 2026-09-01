@@ -287,7 +287,7 @@ export interface AppSnapshot {
 }
 
 export interface ChatRequest { content: string }
-export interface ChatDelta { requestId: string; delta: string; done: boolean; error?: string }
+export interface ChatDelta { requestId: string; delta: string; done: boolean; error?: string; status?: string }
 
 export interface EverbyApi {
   getSnapshot(): Promise<AppSnapshot>;

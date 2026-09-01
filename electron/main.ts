@@ -323,7 +323,11 @@ async function runChat(requestId: string, content: string, attachments: ChatImag
   try {
     if (!database.getModel().configured) throw new Error("请先在模型设置中配置 API");
     await dispatchActionIntent("think", "conversation");
-    const result = await agent.streamReply({ petId, content, attachments, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
+    const result = await agent.streamReply({
+      petId, content, attachments, signal: controller.signal,
+      onDelta: (delta) => emit({ requestId, delta, done: false }),
+      onProgress: (status) => emit({ requestId, delta: "", done: false, status })
+    });
     if (!result.content.trim()) throw new Error("模型没有返回文字");
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
     emit({ requestId, delta: "", done: true });

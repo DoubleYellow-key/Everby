@@ -95,9 +95,11 @@ export class PythonAgentClient {
   async probe(): Promise<AgentCapabilities> { return await this.call("model.probe") as AgentCapabilities; }
   async probeVision(): Promise<{ vision: boolean; message: string }> { return await this.call("vision.probe") as { vision: boolean; message: string }; }
   async snapshot(petId: string): Promise<AgentSnapshot> { return await this.call("agent.snapshot", { petId }) as AgentSnapshot; }
-  async streamReply(input: { petId: string; content: string; attachments?: ChatImageAttachment[]; onDelta: (delta: string) => void; signal?: AbortSignal }): Promise<{ content: string; actionIntent: string }> {
+  async streamReply(input: { petId: string; content: string; attachments?: ChatImageAttachment[]; onDelta: (delta: string) => void; onProgress?: (message: string) => void; signal?: AbortSignal }): Promise<{ content: string; actionIntent: string }> {
     return await this.call("agent.chat", { petId: input.petId, content: input.content, attachments: input.attachments ?? [] }, input.signal, (event) => {
       if (event.type === "assistant_delta" && typeof event.data.delta === "string") input.onDelta(event.data.delta);
+      if (event.type === "tool_started" && event.data.toolName === "inspect_image") input.onProgress?.("正在理解图片…");
+      if (event.type === "tool_finished" && event.data.toolName === "inspect_image") input.onProgress?.("正在组织回复…");
     }) as any;
   }
   async clearConversation(petId: string): Promise<void> { await this.call("conversation.clear", { petId }); }

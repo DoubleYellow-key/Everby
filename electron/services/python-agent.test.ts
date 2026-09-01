@@ -203,8 +203,14 @@ describe("PythonAgentClient protocol v2", () => {
       });
       expect(configured.capabilities).toMatchObject({ toolCalling: true, vision: true });
       const attachment = { id: "image-1", name: "test.png", mimeType: "image/png" as const, dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl2QAAAAASUVORK5CYII=", size: 68 };
-      const reply = await agent.streamReply({ petId: "daily", content: "这张图里有什么？", attachments: [attachment], onDelta: () => undefined });
+      const deltas: string[] = []; const progress: string[] = [];
+      const reply = await agent.streamReply({
+        petId: "daily", content: "这张图里有什么？", attachments: [attachment],
+        onDelta: (delta) => deltas.push(delta), onProgress: (message) => progress.push(message)
+      });
       expect(reply.content).toBe("这是一块纯色测试图片。");
+      expect(deltas.join("")).toBe(reply.content);
+      expect(progress).toEqual(["正在理解图片…", "正在组织回复…"]);
       expect(visionRequests).toBeGreaterThanOrEqual(2);
       expect((await agent.snapshot("daily")).messages[0]?.attachments).toEqual([attachment]);
     } finally {
