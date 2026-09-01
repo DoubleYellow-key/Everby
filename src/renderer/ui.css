@@ -253,6 +253,25 @@ body:has(.manager-shell), body:has(.manager-loading) { background: var(--sidebar
 .settings-main section { max-width: 900px; display: flex; flex-direction: column; gap: 16px; }
 .settings-main section > * { width: 100%; }
 
+/* 细圆角滚动条,替代 Windows 经典带箭头款 */
+.settings-main, .messages, .attachment-strip {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(41, 39, 31, 0.24) transparent;
+}
+.settings-main::-webkit-scrollbar, .messages::-webkit-scrollbar, .attachment-strip::-webkit-scrollbar { width: 10px; height: 10px; }
+.settings-main::-webkit-scrollbar-track, .messages::-webkit-scrollbar-track, .attachment-strip::-webkit-scrollbar-track { background: transparent; }
+.settings-main::-webkit-scrollbar-thumb, .messages::-webkit-scrollbar-thumb, .attachment-strip::-webkit-scrollbar-thumb {
+  background: rgba(41, 39, 31, 0.22);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.settings-main::-webkit-scrollbar-thumb:hover, .messages::-webkit-scrollbar-thumb:hover, .attachment-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(41, 39, 31, 0.36);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
 .page-title { margin-bottom: 8px; }
 .page-title h1 { font-size: 24px; line-height: 1.2; margin: 0 0 7px; font-weight: 740; }
 .page-title p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.5; }
