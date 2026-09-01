@@ -10,15 +10,17 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true })));
 
 describe("AppDatabase desktop-domain ownership", () => {
-  it("persists desktop, chat model and embedding settings", () => {
+  it("persists desktop, chat, embedding and vision model settings", () => {
     const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
     const database = new AppDatabase(join(directory, "app.db"));
     database.updateSettings({ paused: true, scale: 1.25 });
     database.updateModel({ model: "local-chat" }, true);
     database.updateEmbedding({ model: "local-embedding" }, true);
+    database.updateVision({ model: "local-vision" }, true);
     expect(database.getSettings()).toMatchObject({ paused: true, scale: 1.25 });
     expect(database.getModel()).toMatchObject({ model: "local-chat", configured: true });
     expect(database.getEmbedding()).toMatchObject({ model: "local-embedding", configured: true });
+    expect(database.getVision()).toMatchObject({ model: "local-vision", configured: true });
     database.close();
   });
 

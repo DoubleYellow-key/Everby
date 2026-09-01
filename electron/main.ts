@@ -1,7 +1,8 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import { activeWindow } from "get-windows";
+import sharp from "sharp";
 import { z } from "zod";
 import {
   app, BrowserWindow, dialog, ipcMain, Menu, Notification, protocol, safeStorage, screen, Tray, powerMonitor,
@@ -12,7 +13,7 @@ import { actionModeSchema, actionProfilePatchSchema, createActionProfileSchema, 
 import { defaultActionProfiles } from "../src/core/action-profiles";
 import { DAILY_DEFAULT_ACTION_RULES } from "../src/core/default-action-rules";
 import { createActionRuleSchema, updateActionRuleSchema } from "../src/core/action-rule-schema";
-import { ACTION_INTENTS, type ActionIntent, type ActionModeSession, type AgentSnapshot, type AppSettings, type AppSnapshot, type ChatDelta, type MotionCatalog, type PetActionRequest, type PetActionSignal, type PetActionSource, type PetRuntime, type PetSummary } from "../src/shared/contracts";
+import { ACTION_INTENTS, type ActionIntent, type ActionModeSession, type AgentSnapshot, type AppSettings, type AppSnapshot, type ChatDelta, type ChatImageAttachment, type MotionCatalog, type PetActionRequest, type PetActionSignal, type PetActionSource, type PetRuntime, type PetSummary } from "../src/shared/contracts";
 import { AppDatabase } from "./services/database";
 import { migrateSoulDeskUserData } from "./services/brand-migration";
 import { MotionService } from "./services/motion-service";
@@ -36,6 +37,7 @@ let database: AppDatabase;
 let motionService: MotionService;
 let secretStore: SecretStore;
 let embeddingSecretStore: SecretStore;
+let visionSecretStore: SecretStore;
 let agent: PythonAgentClient;
 let managerWindow: BrowserWindow | null = null;
 let petWindow: BrowserWindow | null = null;
@@ -47,7 +49,7 @@ const requests = new Map<string, AbortController>();
 let petCatalog: CatalogPet[] = [];
 let agentSnapshot: AgentSnapshot = {
   petId: "daily", persona: { petId: "daily", name: "Daily", background: "", speakingStyle: "", userAddress: "你", boundaries: "" },
-  messages: [], todos: [], memories: [], memorySummary: "", agentCapabilities: { streaming: false, toolCalling: false, embedding: false },
+  messages: [], todos: [], memories: [], memorySummary: "", agentCapabilities: { streaming: false, toolCalling: false, embedding: false, vision: false },
   agentStatus: "unconfigured", embeddingStatus: "unconfigured"
 };
 
@@ -85,6 +87,23 @@ const embeddingPatchSchema = z.object({
   baseUrl: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "模型地址必须使用 HTTP 或 HTTPS"),
   model: z.string().trim().min(1).max(160), apiKey: z.string().max(2_000).optional()
 }).partial().strict();
+const visionPatchSchema = z.object({
+  baseUrl: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "模型地址必须使用 HTTP 或 HTTPS"),
+  model: z.string().trim().min(1).max(160), apiKey: z.string().max(2_000).optional()
+}).partial().strict();
+const chatImageSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9-]{1,100}$/), name: z.string().min(1).max(160),
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  dataUrl: z.string().min(32).max(3_000_000), size: z.number().int().positive().max(2_000_000)
+}).strict().superRefine((value, context) => {
+  if (!value.dataUrl.startsWith(`data:${value.mimeType};base64,`)) context.addIssue({ code: "custom", message: "图片数据格式无效" });
+});
+const chatImageSourceSchema = z.object({
+  name: z.string().min(1).max(160), mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  dataUrl: z.string().min(32).max(14_000_000), size: z.number().int().positive().max(10_000_000)
+}).strict().superRefine((value, context) => {
+  if (!value.dataUrl.startsWith(`data:${value.mimeType};base64,`)) context.addIssue({ code: "custom", message: "图片数据格式无效" });
+});
 const packIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const actionIdSchema = packIdSchema;
 const todoIdSchema = z.string().uuid();
@@ -244,7 +263,7 @@ function snapshot(): AppSnapshot {
   const pet = activePet();
   const pets: PetSummary[] = petCatalog.map((item) => ({ id: item.id, name: item.name, description: item.description, source: item.source, sheetUrl: petSheetUrl(item), ...(item.persona ? { persona: item.persona } : {}) }));
   return {
-    activePetId: pet.id, pets, persona: agentSnapshot.persona, model: database.getModel(), embedding: database.getEmbedding(), settings: database.getSettings(),
+    activePetId: pet.id, pets, persona: agentSnapshot.persona, model: database.getModel(), embedding: database.getEmbedding(), vision: database.getVision(), settings: database.getSettings(),
     messages: agentSnapshot.messages, memorySummary: agentSnapshot.memorySummary, motionPacks: database.listMotionPacks(pet.id), actionRules: database.listActionRules(pet.id),
     actionProfiles: database.listActionProfiles(pet.id), actionMode: database.getActionMode(pet.id), todos: agentSnapshot.todos,
     memories: agentSnapshot.memories, agentCapabilities: agentSnapshot.agentCapabilities, agentStatus: agentSnapshot.agentStatus,
@@ -253,15 +272,16 @@ function snapshot(): AppSnapshot {
 }
 
 async function configureAgent(): Promise<void> {
-  const model = database.getModel(); const embedding = database.getEmbedding();
+  const model = database.getModel(); const embedding = database.getEmbedding(); const vision = database.getVision();
   const pet = activePet();
-  const [apiKey, embeddingApiKey] = await Promise.all([secretStore.getApiKey(), embeddingSecretStore.getApiKey()]);
+  const [apiKey, embeddingApiKey, visionApiKey] = await Promise.all([secretStore.getApiKey(), embeddingSecretStore.getApiKey(), visionSecretStore.getApiKey()]);
   await agent.health();
   await agent.configure({
     databasePath: join(app.getPath("userData"), "everby.db"), petId: pet.id, petName: pet.name, petDescription: pet.description,
     petPersona: pet.persona ?? null,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    chat: { ...model, apiKey: apiKey ?? "" }, embedding: { ...embedding, apiKey: embeddingApiKey ?? "" }
+    chat: { ...model, apiKey: apiKey ?? "" }, embedding: { ...embedding, apiKey: embeddingApiKey ?? "" },
+    vision: { ...vision, apiKey: visionApiKey ?? "" }
   });
   agentSnapshot = await agent.snapshot(database.getActivePetId());
 }
@@ -294,7 +314,7 @@ async function broadcast(): Promise<void> {
   sendAll("pet:runtime-changed", await runtimePayload());
 }
 
-async function runChat(requestId: string, content: string): Promise<void> {
+async function runChat(requestId: string, content: string, attachments: ChatImageAttachment[] = []): Promise<void> {
   const petId = database.getActivePetId();
   const controller = new AbortController();
   requests.set(requestId, controller);
@@ -303,7 +323,7 @@ async function runChat(requestId: string, content: string): Promise<void> {
   try {
     if (!database.getModel().configured) throw new Error("请先在模型设置中配置 API");
     await dispatchActionIntent("think", "conversation");
-    const result = await agent.streamReply({ petId, content, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
+    const result = await agent.streamReply({ petId, content, attachments, signal: controller.signal, onDelta: (delta) => emit({ requestId, delta, done: false }) });
     if (!result.content.trim()) throw new Error("模型没有返回文字");
     if (database.getActivePetId() !== petId) throw new DOMException("角色已切换", "AbortError");
     emit({ requestId, delta: "", done: true });
@@ -314,6 +334,29 @@ async function runChat(requestId: string, content: string): Promise<void> {
     emit({ requestId, delta: "", done: true, error: message });
     await dispatchActionIntent("confused", "conversation");
   } finally { clearTimeout(timeout); requests.delete(requestId); }
+}
+
+async function normalizeChatImageBuffer(input: Buffer, name: string): Promise<ChatImageAttachment> {
+  if (input.byteLength > 10_000_000) throw new Error(`${name} 超过 10 MB`);
+  const image = sharp(input, { animated: false, limitInputPixels: 40_000_000 }).rotate();
+  const metadata = await image.metadata();
+  if (!metadata.format || !["jpeg", "png", "webp"].includes(metadata.format)) throw new Error(`${name} 不是支持的图片格式`);
+  let output = await image.resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
+    .flatten({ background: "#ffffff" }).jpeg({ quality: 84, progressive: true }).toBuffer();
+  if (output.byteLength > 2_000_000) {
+    output = await sharp(input, { animated: false, limitInputPixels: 40_000_000 }).rotate()
+      .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+      .flatten({ background: "#ffffff" }).jpeg({ quality: 72, progressive: true }).toBuffer();
+  }
+  if (output.byteLength > 2_000_000) throw new Error(`${name} 压缩后仍超过 2 MB`);
+  return {
+    id: crypto.randomUUID(), name: `${basename(name, extname(name))}.jpg`, mimeType: "image/jpeg",
+    dataUrl: `data:image/jpeg;base64,${output.toString("base64")}`, size: output.byteLength
+  };
+}
+
+async function normalizeChatImage(file: string): Promise<ChatImageAttachment> {
+  return normalizeChatImageBuffer(await readFile(file), basename(file));
 }
 
 async function installMotionForPet(path: string, petId: string, enabled = true): Promise<ReturnType<AppDatabase["listMotionPacks"]>[number]> {
@@ -436,11 +479,47 @@ function registerIpc(): void {
     trusted(event); const { apiKey, ...embeddingPatch } = embeddingPatchSchema.parse(patch ?? {}); if (apiKey?.trim()) await embeddingSecretStore.setApiKey(apiKey.trim());
     const value = database.updateEmbedding(embeddingPatch, Boolean(apiKey?.trim()) || database.getEmbedding().configured); await configureAgent(); await broadcast(); return value;
   });
+  ipcMain.handle("vision:update", async (event, patch) => {
+    trusted(event); const { apiKey, ...visionPatch } = visionPatchSchema.parse(patch ?? {}); if (apiKey?.trim()) await visionSecretStore.setApiKey(apiKey.trim());
+    const value = database.updateVision(visionPatch, Boolean(apiKey?.trim()) || database.getVision().configured); await configureAgent(); await broadcast(); return value;
+  });
   ipcMain.handle("model:test", async (event) => {
     trusted(event); const key = await secretStore.getApiKey(); if (!key) return { ok: false, message: "尚未保存 API Key" };
     try { const capabilities = await agent.probe(); await refreshAgentSnapshot(); broadcastSnapshot(); return { ok: capabilities.streaming, message: capabilities.toolCalling ? "连接成功，工具调用可用" : "聊天可用，但当前模型不支持工具调用" }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : "连接失败" }; }
   });
-  ipcMain.handle("chat:send", (event, content: unknown) => { trusted(event); if (typeof content !== "string" || !content.trim() || content.length > 4_000) throw new Error("消息内容无效"); const id = crypto.randomUUID(); void runChat(id, content.trim()); return id; });
+  ipcMain.handle("vision:test", async (event) => {
+    trusted(event); const key = await visionSecretStore.getApiKey(); if (!key) return { ok: false, message: "尚未保存视觉模型 API Key" };
+    try { const result = await agent.probeVision(); await refreshAgentSnapshot(); broadcastSnapshot(); return { ok: result.vision, message: result.message }; }
+    catch (error) { return { ok: false, message: error instanceof Error ? error.message : "视觉模型连接失败" }; }
+  });
+  ipcMain.handle("chat:select-images", async (event) => {
+    trusted(event);
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile", "multiSelections"],
+      filters: [{ name: "图片", extensions: ["jpg", "jpeg", "png", "webp"] }]
+    });
+    if (result.canceled) return [];
+    if (result.filePaths.length > 3) throw new Error("每次最多选择 3 张图片");
+    return Promise.all(result.filePaths.map(normalizeChatImage));
+  });
+  ipcMain.handle("chat:prepare-images", async (event, rawImages: unknown) => {
+    trusted(event);
+    const images = z.array(chatImageSourceSchema).max(3).parse(rawImages);
+    return Promise.all(images.map((image) => {
+      const encoded = image.dataUrl.slice(image.dataUrl.indexOf(",") + 1);
+      const input = Buffer.from(encoded, "base64");
+      if (input.byteLength !== image.size) throw new Error(`${image.name} 的图片数据不完整`);
+      return normalizeChatImageBuffer(input, image.name);
+    }));
+  });
+  ipcMain.handle("chat:send", (event, content: unknown, rawAttachments: unknown = []) => {
+    trusted(event);
+    if (typeof content !== "string" || content.length > 4_000) throw new Error("消息内容无效");
+    const attachments = z.array(chatImageSchema).max(3).parse(rawAttachments);
+    const trimmed = content.trim();
+    if (!trimmed && attachments.length === 0) throw new Error("消息内容无效");
+    const id = crypto.randomUUID(); void runChat(id, trimmed || "请看看我附加的图片。", attachments); return id;
+  });
   ipcMain.handle("chat:stop", (event, id: unknown) => { trusted(event); if (typeof id === "string") requests.get(id)?.abort(); });
   ipcMain.handle("chat:clear", async (event) => { trusted(event); await agent.clearConversation(database.getActivePetId()); await broadcast(); });
   ipcMain.handle("motion:import", async (event) => { trusted(event); const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Everby 动作扩展", extensions: ["soulmotion"] }] }); return result.canceled || !result.filePaths[0] ? null : installMotion(result.filePaths[0]); });
@@ -514,6 +593,10 @@ async function initialize(): Promise<void> {
     decrypt: async (value) => (await safeStorage.decryptStringAsync(value)).result
   });
   embeddingSecretStore = new SecretStore(join(userData, "embedding-api-key.bin"), {
+    encrypt: async (value) => safeStorage.encryptStringAsync(value),
+    decrypt: async (value) => (await safeStorage.decryptStringAsync(value)).result
+  });
+  visionSecretStore = new SecretStore(join(userData, "vision-api-key.bin"), {
     encrypt: async (value) => safeStorage.encryptStringAsync(value),
     decrypt: async (value) => (await safeStorage.decryptStringAsync(value)).result
   });

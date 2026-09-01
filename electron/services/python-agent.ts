@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { join } from "node:path";
 import { z } from "zod";
-import type { AgentCapabilities, AgentSnapshot, CreateTodoInput, MemoryItem, PersonaProfile, PetPersonaDefaults, TodoItem, UpdateTodoInput } from "../../src/shared/contracts";
+import type { AgentCapabilities, AgentSnapshot, ChatImageAttachment, CreateTodoInput, MemoryItem, PersonaProfile, PetPersonaDefaults, TodoItem, UpdateTodoInput } from "../../src/shared/contracts";
 
 const errorSchema = z.object({ code: z.string(), message: z.string(), retryable: z.boolean() }).strict();
 const resultSchema = z.object({ protocolVersion: z.literal(2), id: z.string(), result: z.unknown().optional(), error: errorSchema.optional() }).strict();
@@ -19,6 +19,7 @@ export type RuntimeConfiguration = {
   databasePath: string; petId: string; petName: string; petDescription: string; petPersona?: PetPersonaDefaults | null; timezone: string;
   chat: { baseUrl: string; apiKey: string; model: string; temperature: number };
   embedding: { baseUrl: string; apiKey: string; model: string };
+  vision?: { baseUrl: string; apiKey: string; model: string };
 };
 export type PythonAgentOptions = { packaged: boolean; appPath: string; resourcesPath: string; pythonExecutable?: string };
 
@@ -92,9 +93,10 @@ export class PythonAgentClient {
     return await this.call("runtime.configure", { ...value, databasePath: value.databasePath.replaceAll("\\", "/") }) as any;
   }
   async probe(): Promise<AgentCapabilities> { return await this.call("model.probe") as AgentCapabilities; }
+  async probeVision(): Promise<{ vision: boolean; message: string }> { return await this.call("vision.probe") as { vision: boolean; message: string }; }
   async snapshot(petId: string): Promise<AgentSnapshot> { return await this.call("agent.snapshot", { petId }) as AgentSnapshot; }
-  async streamReply(input: { petId: string; content: string; onDelta: (delta: string) => void; signal?: AbortSignal }): Promise<{ content: string; actionIntent: string }> {
-    return await this.call("agent.chat", { petId: input.petId, content: input.content }, input.signal, (event) => {
+  async streamReply(input: { petId: string; content: string; attachments?: ChatImageAttachment[]; onDelta: (delta: string) => void; signal?: AbortSignal }): Promise<{ content: string; actionIntent: string }> {
+    return await this.call("agent.chat", { petId: input.petId, content: input.content, attachments: input.attachments ?? [] }, input.signal, (event) => {
       if (event.type === "assistant_delta" && typeof event.data.delta === "string") input.onDelta(event.data.delta);
     }) as any;
   }

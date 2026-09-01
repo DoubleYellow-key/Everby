@@ -163,4 +163,53 @@ describe("PythonAgentClient protocol v2", () => {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   }, 30_000);
+
+  it("uses the separately configured vision model through inspect_image", async () => {
+    let visionRequests = 0;
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []; request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          model?: string; messages?: Array<{ role?: string; content?: unknown }>; tool_choice?: unknown; tools?: Array<{ function?: { name?: string } }>;
+        };
+        if (payload.model === "fake-vision") {
+          visionRequests += 1;
+          expect(JSON.stringify(payload.messages)).toContain("data:image/png;base64");
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ id: "vision-result", object: "chat.completion", created: 1, model: "fake-vision", choices: [{ index: 0, message: { role: "assistant", content: "图中是一块纯色测试图片。" }, finish_reason: "stop" }] }));
+          return;
+        }
+        const hasToolResult = payload.messages?.some((message) => message.role === "tool");
+        const toolName = payload.tool_choice ? "capability_probe" : "inspect_image";
+        const canInspect = payload.tools?.some((item) => item.function?.name === "inspect_image");
+        const content = hasToolResult ? "这是一块纯色测试图片。" : payload.tool_choice || canInspect ? null : "OK";
+        const delta = content === null
+          ? { role: "assistant", tool_calls: [{ index: 0, id: `call-${toolName}`, type: "function", function: { name: toolName, arguments: toolName === "inspect_image" ? '{"question":"图片里有什么？","attachment_ids":["image-1"]}' : "{}" } }] }
+          : { role: "assistant", content };
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(`data: ${JSON.stringify({ id: "chatcmpl-vision-tool", object: "chat.completion.chunk", created: 1, model: "fake-chat", choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: "chatcmpl-vision-tool", object: "chat.completion.chunk", created: 1, model: "fake-chat", choices: [{ index: 0, delta: {}, finish_reason: content === null ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`);
+      });
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve()); });
+    const path = testDatabase("vision-tool"); const port = (server.address() as AddressInfo).port;
+    const agent = new PythonAgentClient({ packaged: false, appPath: process.cwd(), resourcesPath: "" });
+    try {
+      await agent.health();
+      const configured = await agent.configure({
+        databasePath: path, petId: "daily", petName: "Daily", petDescription: "", timezone: "Asia/Shanghai",
+        chat: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "chat-key", model: "fake-chat", temperature: 0.2 },
+        embedding: { baseUrl: "", apiKey: "", model: "" },
+        vision: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "vision-key", model: "fake-vision" }
+      });
+      expect(configured.capabilities).toMatchObject({ toolCalling: true, vision: true });
+      const attachment = { id: "image-1", name: "test.png", mimeType: "image/png" as const, dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl2QAAAAASUVORK5CYII=", size: 68 };
+      const reply = await agent.streamReply({ petId: "daily", content: "这张图里有什么？", attachments: [attachment], onDelta: () => undefined });
+      expect(reply.content).toBe("这是一块纯色测试图片。");
+      expect(visionRequests).toBeGreaterThanOrEqual(2);
+      expect((await agent.snapshot("daily")).messages[0]?.attachments).toEqual([attachment]);
+    } finally {
+      agent.close(); await new Promise((resolve) => setTimeout(resolve, 500)); await cleanup(path);
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 40_000);
 });

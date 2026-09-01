@@ -10,6 +10,22 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: number;
+  attachments: ChatImageAttachment[];
+}
+
+export interface ChatImageAttachment {
+  id: string;
+  name: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  dataUrl: string;
+  size: number;
+}
+
+export interface ChatImageSource {
+  name: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  dataUrl: string;
+  size: number;
 }
 
 export interface AgentDecision {
@@ -82,10 +98,17 @@ export interface EmbeddingSettings {
   configured: boolean;
 }
 
+export interface VisionSettings {
+  baseUrl: string;
+  model: string;
+  configured: boolean;
+}
+
 export interface AgentCapabilities {
   streaming: boolean;
   toolCalling: boolean;
   embedding: boolean;
+  vision: boolean;
 }
 
 export type AgentStatus = "unconfigured" | "ready" | "degraded" | "busy" | "error";
@@ -248,6 +271,7 @@ export interface AppSnapshot {
   persona: PersonaProfile;
   model: ModelSettings;
   embedding: EmbeddingSettings;
+  vision: VisionSettings;
   settings: AppSettings;
   messages: ChatMessage[];
   memorySummary: string;
@@ -274,8 +298,12 @@ export interface EverbyApi {
   updatePersona(patch: Partial<PersonaProfile>): Promise<PersonaProfile>;
   updateModel(patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }): Promise<ModelSettings>;
   updateEmbedding(patch: Partial<Omit<EmbeddingSettings, "configured">> & { apiKey?: string }): Promise<EmbeddingSettings>;
+  updateVision(patch: Partial<Omit<VisionSettings, "configured">> & { apiKey?: string }): Promise<VisionSettings>;
   testModel(): Promise<{ ok: boolean; message: string }>;
-  sendMessage(content: string): Promise<string>;
+  testVision(): Promise<{ ok: boolean; message: string }>;
+  selectChatImages(): Promise<ChatImageAttachment[]>;
+  prepareChatImages(images: ChatImageSource[]): Promise<ChatImageAttachment[]>;
+  sendMessage(content: string, attachments?: ChatImageAttachment[]): Promise<string>;
   stopMessage(requestId: string): Promise<void>;
   clearMessages(): Promise<void>;
   openChat(): Promise<void>;

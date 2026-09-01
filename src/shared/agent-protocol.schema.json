@@ -146,6 +146,11 @@
         "default": false,
         "title": "Embedding",
         "type": "boolean"
+      },
+      "vision": {
+        "default": false,
+        "title": "Vision",
+        "type": "boolean"
       }
     },
     "title": "AgentCapabilities",

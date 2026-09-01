@@ -4,7 +4,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
@@ -13,7 +13,7 @@ from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository, DEFAULT_PERSONA_BACKGROUND
 from everby_agent.persistence.migration import migrate_legacy_data
 from everby_agent.persona import build_persona_context, suppress_unsolicited_self_intro
-from everby_agent.runtime import checkpoint_database_path
+from everby_agent.runtime import AgentRuntime, checkpoint_database_path
 from everby_agent.schemas.protocol import RpcRequest
 from everby_agent.workflows.reminder_copy import compose_presence_copy, compose_reminder_copy
 from everby_agent.workflows.scheduler import AgentScheduler
@@ -30,6 +30,16 @@ class ProtocolV2Tests(unittest.TestCase):
     def test_accepts_protocol_v2(self):
         request = RpcRequest.model_validate({"id": "1", "protocolVersion": 2, "method": "agent.snapshot", "params": {}})
         self.assertEqual(request.protocol_version, 2)
+
+
+class VisionProbeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_the_provider_error_instead_of_a_generic_failure(self):
+        runtime = AgentRuntime(lambda *_args: None)
+        runtime.vision_model = object()  # type: ignore[assignment]
+        runtime._analyze_images = AsyncMock(side_effect=RuntimeError("model does not support image input"))  # type: ignore[method-assign]
+        result = await runtime.probe_vision()
+        self.assertFalse(result["vision"])
+        self.assertIn("does not support image", result["message"])
 
 
 class ReplyStreamHandlerTests(unittest.IsolatedAsyncioTestCase):
@@ -94,6 +104,15 @@ class AgentRepositoryTests(unittest.TestCase):
         self.repo.add_message("daily", "user", "First", created_at=1_000)
         self.repo.add_message("daily", "assistant", "Second", created_at=1_000)
         self.assertEqual([item["content"] for item in self.repo.list_messages("daily")], ["First", "Second"])
+
+    def test_persists_only_structured_chat_image_attachments_with_the_user_message(self):
+        attachment = {
+            "id": "image-1", "name": "desk.jpg", "mimeType": "image/jpeg",
+            "dataUrl": "data:image/jpeg;base64,YQ==", "size": 1,
+        }
+        self.repo.add_message("daily", "user", "这是什么？", attachments=[attachment])
+        message = self.repo.list_messages("daily")[0]
+        self.assertEqual(message["attachments"], [attachment])
 
     def test_migrates_legacy_messages_todos_persona_and_summary_without_deleting_source_rows(self):
         self.repo.close()

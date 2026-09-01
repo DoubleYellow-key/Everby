@@ -106,6 +106,9 @@ class AgentRepository:
         CREATE TABLE IF NOT EXISTS agent_personas(pet_id TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS agent_settings(pet_id TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
         """)
+        message_columns = {row[1] for row in self.db.execute("PRAGMA table_info(agent_messages)")}
+        if "attachments_json" not in message_columns:
+            self.db.execute("ALTER TABLE agent_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'")
         self.db.commit()
 
     def close(self) -> None:
@@ -121,21 +124,29 @@ class AgentRepository:
         self.db.commit()
         return epoch
 
-    def add_message(self, pet_id: str, role: str, content: str, message_id: str | None = None, created_at: int | None = None) -> dict[str, Any]:
+    def add_message(self, pet_id: str, role: str, content: str, message_id: str | None = None,
+                    created_at: int | None = None, attachments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         if role not in {"user", "assistant"}:
             raise ValueError("invalid message role")
-        item = {"id": message_id or str(uuid.uuid4()), "role": role, "content": content, "createdAt": created_at or _now_ms()}
-        self.db.execute("INSERT OR REPLACE INTO agent_messages(id,pet_id,epoch,role,content,created_at) VALUES(?,?,?,?,?,?)",
-                        (item["id"], pet_id, self.epoch(pet_id), role, content, item["createdAt"]))
+        item = {"id": message_id or str(uuid.uuid4()), "role": role, "content": content,
+                "createdAt": created_at or _now_ms(), "attachments": attachments or []}
+        self.db.execute("INSERT OR REPLACE INTO agent_messages(id,pet_id,epoch,role,content,created_at,attachments_json) VALUES(?,?,?,?,?,?,?)",
+                        (item["id"], pet_id, self.epoch(pet_id), role, content, item["createdAt"],
+                         json.dumps(item["attachments"], ensure_ascii=True)))
         self.db.execute("DELETE FROM agent_messages WHERE pet_id=? AND epoch=? AND id NOT IN (SELECT id FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC, rowid DESC LIMIT 200)",
                         (pet_id, self.epoch(pet_id), pet_id, self.epoch(pet_id)))
         self.db.commit()
         return item
 
     def list_messages(self, pet_id: str, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self.db.execute("SELECT id,role,content,created_at AS createdAt FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        rows = self.db.execute("SELECT id,role,content,created_at AS createdAt,attachments_json AS attachmentsJson FROM agent_messages WHERE pet_id=? AND epoch=? ORDER BY created_at DESC, rowid DESC LIMIT ?",
                                (pet_id, self.epoch(pet_id), limit)).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        result = []
+        for row in reversed(rows):
+            item = dict(row)
+            item["attachments"] = json.loads(item.pop("attachmentsJson") or "[]")
+            result.append(item)
+        return result
 
     def _idempotent(self, run_id: str | None, tool_call_id: str | None) -> dict[str, Any] | None:
         if not run_id or not tool_call_id:

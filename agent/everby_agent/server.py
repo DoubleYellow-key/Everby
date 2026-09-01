@@ -38,6 +38,8 @@ class AgentServer:
             return {"ok": True}
         if method == "model.probe":
             return await self._runtime.probe()
+        if method == "vision.probe":
+            return await self._runtime.probe_vision()
         if method == "agent.chat":
             return await self._runtime.chat(request.id, params)
         if method == "agent.cancel":

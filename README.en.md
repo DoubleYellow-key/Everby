@@ -15,6 +15,7 @@ The current release includes the original character **Daily** and can also disco
 - Nine transparent frame-animation sets for Daily, including a dedicated coding animation
 - OpenAI Chat Completions-compatible APIs with streaming, cancellation, timeouts, and bounded retries
 - A LangChain `create_agent` tool loop and LangGraph state graph for conversations, short-term checkpoints, and capability fallback; streaming, tool-calling, and embedding support are probed whenever model settings change
+- Up to three images can be selected or pasted into a conversation; the chat model invokes a separately configured vision model through the scoped `inspect_image` tool when needed
 - A response-goal analysis step before generation and a quality gate afterward; repeated introductions, repetitive forms of address, and generic companion phrases are repaired deterministically or sent through a controlled rewrite node before persistence
 - Python background scheduling for deterministic reminders, proactive companionship, and long-term memory curation
 - Local to-do lists, one-time or daily reminders, and low-frequency AI follow-up on upcoming tasks
@@ -137,7 +138,7 @@ Legacy `SOULDESK_*` environment variables and the `souldesk://` resource protoco
 
 ## Model Configuration
 
-Configure separate OpenAI-compatible chat and embedding services on the **Model** page. Embeddings use their own configuration and encrypted API key:
+Configure separate OpenAI-compatible chat, image-understanding, and embedding services on the **Model** page. Each can use a different endpoint, model, and encrypted API key:
 
 | Setting | OpenAI example | Ollama example |
 | --- | --- | --- |
@@ -154,6 +155,8 @@ EVERBY_MODEL=llama3.2:latest pnpm agent:smoke
 ```
 
 API keys are encrypted with macOS Keychain or Windows DPAPI. They are never returned to the renderer over IPC and should not be stored in `.env` files or committed to the repository.
+
+After saving and testing the image-understanding model, select images or paste screenshots into the chat composer. Electron validates and compresses each image without exposing its local path. Images do not bypass the conversation workflow: a tool-capable chat model calls `inspect_image` when the answer depends on visual content, then uses the returned observation to write the final response.
 
 ## Plans and Reminders
 
@@ -178,7 +181,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 
 `analyze_turn` decides whether the turn is ordinary companionship, a question, or an operation. The post-generation quality gate checks repeated introductions, repeated forms of address, generic companion copy, and claims that an operation succeeded without tool evidence. The full path uses LangChain `create_agent`, limits tool-loop recursion to 6, allows at most two writes per turn, and applies a 45-second timeout. To-do writes are idempotent by `run_id + tool_call_id`; durable facts are deduplicated by exact content or vector similarity.
 
-The model can access only six companion tools:
+The model has six companion tools by default. A seventh image tool is added only after vision capability succeeds:
 
 | Tool | Purpose |
 | --- | --- |
@@ -188,8 +191,9 @@ The model can access only six companion tools:
 | `complete_todo` | Complete an item by exact ID; `list_todos` must run first |
 | `search_memories` | Search the current character's durable memories when automatic recall is insufficient |
 | `remember_memory` | Immediately store a durable fact only after an explicit request to remember it |
+| `inspect_image` | Inspect only images attached by the user in the current turn through the separate vision model and return an untrusted visual observation |
 
-There are no model tools for deleting plans or memories, file access, shell execution, application control, or arbitrary networking. Streaming, tool-calling, and embedding support are probed independently. Models without native tool calling enter `direct_chat`: companion chat and existing memory recall remain available, while the native tool loop and automatic memory curation are disabled.
+There are no model tools for deleting plans or memories, file access, shell execution, application control, or arbitrary networking. Streaming, tool-calling, image-understanding, and embedding support are probed independently. Models without native tool calling enter `direct_chat`: companion chat and existing memory recall remain available, while the native tool loop, image inspection, and automatic memory curation are disabled.
 
 ### Short-Term and Long-Term Memory
 
@@ -260,7 +264,7 @@ PyInstaller cannot cross-compile across operating systems or architectures, so e
 
 ## Data and Privacy
 
-Application data is stored under Electron's `userData` directory. Python exclusively owns messages, personas, to-dos, memories, and workflow data, with LangGraph checkpoints stored in a separate SQLite database to avoid write-lock contention. Electron stores desktop settings, animation packages, and non-secret model configuration only. Chat and embedding API keys are encrypted separately with `safeStorage` and sent to Python memory only after startup.
+Application data is stored under Electron's `userData` directory. Python exclusively owns messages, personas, to-dos, memories, and workflow data, with LangGraph checkpoints stored in a separate SQLite database to avoid write-lock contention. Electron stores desktop settings, animation packages, and non-secret model configuration only. Chat, image-understanding, and embedding API keys are encrypted separately with `safeStorage` and sent to Python memory only after startup.
 
 Foreground application awareness is disabled by default. When enabled, Everby reads only the application name, not window titles, URLs, filenames, screenshots, or window contents, and application names are not written to the database. Lock-screen, paused, and do-not-disturb states suppress proactive model calls. Foreground awareness can be disabled at any time from the **Privacy** page.
 
@@ -273,6 +277,7 @@ External character assets are not covered by Everby's license and are not copied
 ## Troubleshooting
 
 - **Chat works, but plans cannot be created:** click **Probe Capabilities** on the **Model** page. Models without native tool calling run in degraded mode; switch to a compatible OpenAI-style model for the complete tool loop.
+- **Images attach but cannot be inspected:** save and test the image-understanding model, then confirm that chat-model tool calling also passes its probe. The `direct_chat` fallback does not run image tools.
 - **An installed animation extension does not play:** verify that its `targetPetId` matches the current character, the pack is enabled, and the action works in the library preview. Event playback also requires a per-mode override or event rule.
 - **The Python sidecar does not start:** install `agent/requirements-runtime.txt` and set `EVERBY_PYTHON` to a Python 3.10+ interpreter when necessary.
 - **Character or animation import fails:** run the `everby-pet-install` validation script or `pnpm motion:validate` to see the exact atlas, manifest, or resource-path error.

@@ -15,10 +15,11 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - Daily 的九组透明逐帧动画，包括专属的电脑敲代码动作
 - OpenAI Chat Completions 兼容接口，支持流式回复、取消、超时和有限重试
 - LangChain `create_agent` 与 LangGraph 状态图负责对话、工具循环、短期 checkpoint 和能力降级；每次模型配置后自动探测流式、工具与向量能力
+- 对话支持选择或粘贴最多三张图片；聊天模型通过受限的 `inspect_image` 工具按需调用独立配置的视觉模型
 - 对话图在生成前分析本轮响应目标，生成后经过质量门；自我介绍、重复称呼与空泛陪伴话术会被确定性修复或进入受控重写节点，再持久化到会话
 - Python 后台调度负责确定性提醒、主动陪伴与长期记忆整理
 - 本地计划清单、一次性或每日提醒，以及低频 AI 清单关注
-- SQLite FTS5 + 向量长期记忆与 Electron `safeStorage` 双 API Key 保护
+- SQLite FTS5 + 向量长期记忆，以及聊天、识图、Embedding 三套独立 `safeStorage` 凭据
 - 可视化动作库、默认常规状态、可新增/删除的自定义状态、按角色事件规则，以及 `.soulmotion` 扩展包管理
 - 动作导演通过时间预算控制非待机占比，支持固定动作或加权动作池、状态内事件覆盖和不可用扩展动作回退；Daily 示例扩展与六条事件规则会在首次启动时初始化
 - 黄色与白色为主的管理界面、聊天气泡和托盘控制
@@ -136,7 +137,7 @@ Everby 是 SoulDesk 的后续名称。首次启动时，如果系统应用数据
 
 ## 配置模型
 
-在“模型”页面分别填写 OpenAI 兼容的聊天与 Embedding 服务。Embedding 使用独立配置和独立加密 API Key：
+在“模型”页面分别填写 OpenAI 兼容的聊天、图片理解与 Embedding 服务。三者可以使用不同地址、模型和独立加密 API Key：
 
 | 设置 | OpenAI 示例 | Ollama 示例 |
 | --- | --- | --- |
@@ -153,6 +154,8 @@ EVERBY_MODEL=llama3.2:latest pnpm agent:smoke
 ```
 
 API Key 由 macOS Keychain 或 Windows DPAPI 加密保存，不会通过 IPC 返回给渲染进程，也不应写入 `.env` 或提交到仓库。
+
+配置并测试图片理解模型后，可在聊天框选择图片或直接粘贴截图。Electron 会先校验格式并压缩图片，不向模型暴露本地路径。图片不会自动绕过对话工作流：支持工具调用的聊天模型会在回答依赖画面时调用 `inspect_image`，视觉观察结果再回到主模型生成最终回复。
 
 ## 计划与提醒
 
@@ -177,7 +180,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 
 `analyze_turn` 先确定本轮是普通陪伴、回答问题还是执行操作；生成后的质量门会检查重复自我介绍、重复称呼、空泛陪伴话术和“未执行工具却声称成功”等问题。完整工具路径使用 LangChain `create_agent`，工具循环递归上限为 6，每轮最多 2 个写操作并设置 45 秒超时；待办写入以 `run_id + tool_call_id` 幂等，长期事实通过精确内容或向量相似度去重。
 
-模型只能使用六个陪伴工具：
+模型默认只能使用六个陪伴工具；视觉能力探测成功后按条件增加一个识图工具：
 
 | 工具 | 用途 |
 | --- | --- |
@@ -187,8 +190,9 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 | `complete_todo` | 按准确 ID 完成计划，调用前必须先执行 `list_todos` |
 | `search_memories` | 在自动召回不足时搜索当前角色的长期记忆 |
 | `remember_memory` | 仅在用户明确要求“记住”时立即保存长期事实 |
+| `inspect_image` | 仅识别本轮用户主动附加的图片，通过独立视觉模型返回不可信的视觉观察 |
 
-模型没有删除计划、删除记忆、文件、Shell、应用控制或任意网络工具。流式、工具调用和 Embedding 能力会分别探测；不支持原生工具调用时进入 `direct_chat`，陪伴聊天和已有记忆召回仍可用，原生工具循环与自动记忆整理会停用。
+模型没有删除计划、删除记忆、文件、Shell、应用控制或任意网络工具。流式、工具调用、图片理解和 Embedding 能力会分别探测；不支持原生工具调用时进入 `direct_chat`，陪伴聊天和已有记忆召回仍可用，原生工具循环、识图与自动记忆整理会停用。
 
 ### 短期与长期记忆
 
@@ -259,7 +263,7 @@ PyInstaller 不支持跨系统或跨架构编译，请在对应的 runner 上构
 
 ## 数据与隐私
 
-应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆与工作流数据，并使用同目录的独立 SQLite 文件保存 LangGraph checkpoint，避免与业务写入争抢锁；Electron 只保存桌面设置、动作包和模型非机密配置。聊天与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
+应用数据位于 Electron `userData` 目录。Python 独占消息、人设、待办、记忆与工作流数据，并使用同目录的独立 SQLite 文件保存 LangGraph checkpoint，避免与业务写入争抢锁；Electron 只保存桌面设置、动作包和模型非机密配置。聊天、图片理解与 Embedding API Key 分别通过 `safeStorage` 加密，启动后仅送入 Python 内存。前台应用感知默认关闭；开启后只读取应用名称，不读取窗口标题、URL、文件名、屏幕或窗口内容，且应用名称不会写入数据库。
 
 锁屏、暂停和免打扰期间不会触发主动模型调用。前台应用感知可以随时在“隐私”页面关闭。
 
@@ -272,6 +276,7 @@ Daily 是 Everby 的原创内置角色，其运行图集与 QA 资料保存在�
 ## 常见问题
 
 - **能聊天但不能创建计划**：在“模型”页点击“探测能力”。模型不支持原生 tool calling 时会显示降级状态；可更换支持工具调用的 OpenAI 兼容模型。
+- **图片可以附加但无法识别**：先保存并测试图片理解模型，同时确认聊天模型的工具调用探测通过；`direct_chat` 降级模式不会执行识图工具。
 - **动作扩展已安装但没有播放**：确认当前角色与扩展的 `targetPetId` 一致、扩展已启用，并在动作库试播；事件动作还需要加入状态覆盖或事件规则。
 - **Python sidecar 无法启动**：确认已安装 `agent/requirements-runtime.txt`，并通过 `EVERBY_PYTHON` 指向 Python 3.10+ 解释器。
 - **角色或动作包导入失败**：分别运行 `everby-pet-install` 的校验脚本或 `pnpm motion:validate` 查看具体尺寸、清单和资源路径错误。

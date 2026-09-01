@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_SETTINGS } from "../../src/core/codex-atlas";
-import type { ActionMode, ActionModeSession, ActionProfile, ActionRule, AppSettings, CreateActionProfileInput, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionProfileInput, UpdateActionRuleInput } from "../../src/shared/contracts";
+import type { ActionMode, ActionModeSession, ActionProfile, ActionRule, AppSettings, CreateActionProfileInput, CreateActionRuleInput, EmbeddingSettings, ModelSettings, MotionPackSummary, UpdateActionProfileInput, UpdateActionRuleInput, VisionSettings } from "../../src/shared/contracts";
 
 export const DEFAULT_MODEL: ModelSettings = { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", temperature: 0.7, configured: false };
 export const DEFAULT_EMBEDDING: EmbeddingSettings = { baseUrl: "https://api.openai.com/v1", model: "text-embedding-3-small", configured: false };
+export const DEFAULT_VISION: VisionSettings = { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", configured: false };
 
 export class AppDatabase {
   private readonly db: DatabaseSync;
@@ -86,6 +87,12 @@ export class AppDatabase {
   updateEmbedding(patch: Partial<Omit<EmbeddingSettings, "configured">>, configured = this.getEmbedding().configured): EmbeddingSettings {
     const next = { ...this.getEmbedding(), ...patch, configured };
     this.setJson("embedding", next);
+    return next;
+  }
+  getVision(): VisionSettings { return this.getJson("vision", DEFAULT_VISION); }
+  updateVision(patch: Partial<Omit<VisionSettings, "configured">>, configured = this.getVision().configured): VisionSettings {
+    const next = { ...this.getVision(), ...patch, configured };
+    this.setJson("vision", next);
     return next;
   }
 
