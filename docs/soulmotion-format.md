@@ -37,4 +37,4 @@ pnpm motion:validate -- ./daily-dance.soulmotion
 
 导入后可在“设置 → 动作”中预览基础动作和扩展动作，将动作加入常态/休息的权重池、设为专注模式的固定动作，或建立点击、对话语义和提醒事件规则。停用或卸载扩展不会删除引用它的配置；状态模式会自动回退到基础动作，事件规则则显示为“动作不可用”。
 
-仓库提供了可直接导入的 [Daily 日常动作组合](../examples/motions/daily-routines/README.md)，用于验证动作包开发和导入链路。
+仓库提供了可直接导入的 [Daily 日常动作组合](../examples/motions/daily-routines/README.md)，用于验证动作包开发和导入链路。仓库附带的 ZCode skill [`skills/everby-motion-pack`](../skills/everby-motion-pack/SKILL.md) 可以让 AI 助手完成从动作设计、motion.json 生成到构建校验的全流程。

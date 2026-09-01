@@ -16,6 +16,7 @@ import { ACTION_INTENTS, type ActionIntent, type ActionModeSession, type AgentSn
 import { AppDatabase } from "./services/database";
 import { migrateSoulDeskUserData } from "./services/brand-migration";
 import { MotionService } from "./services/motion-service";
+import { resolveAppIconPath } from "./services/app-icon";
 import { discoverPets, type CatalogPet } from "./services/pet-catalog";
 import { installPet } from "./services/pet-installer";
 import { PythonAgentClient } from "./services/python-agent";
@@ -54,7 +55,10 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const preload = join(__dirname, "../preload/preload.js");
 
 function appIconPath(): string {
-  return app.isPackaged ? join(process.resourcesPath, "app-icon.png") : join(app.getAppPath(), "build/icon.png");
+  return resolveAppIconPath({
+    appPath: app.getAppPath(), isPackaged: app.isPackaged,
+    platform: process.platform, resourcesPath: process.resourcesPath
+  });
 }
 
 function load(window: BrowserWindow, page: "manager" | "pet" | "chat"): void {
@@ -118,7 +122,7 @@ function createChatWindow(): BrowserWindow {
   if (chatWindow) return chatWindow;
   const window = new BrowserWindow({
     width: 380, height: 560, minWidth: 340, minHeight: 180, frame: false, transparent: true,
-    show: false, skipTaskbar: true, alwaysOnTop: true, resizable: true,
+    show: false, skipTaskbar: true, alwaysOnTop: true, resizable: true, icon: appIconPath(),
     webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
   window.on("blur", () => { if (!window.webContents.isDevToolsOpened()) window.hide(); });
@@ -149,6 +153,7 @@ function createPetWindow(): BrowserWindow {
   const window = new BrowserWindow({
     ...area, frame: false, transparent: true, backgroundColor: "#00000000", show: false,
     focusable: false, skipTaskbar: true, hasShadow: false, resizable: false, alwaysOnTop: true,
+    icon: appIconPath(),
     webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
   window.setIgnoreMouseEvents(true, { forward: true });

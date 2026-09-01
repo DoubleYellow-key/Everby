@@ -32,11 +32,82 @@ pnpm agent:test
 pnpm dev
 ```
 
-首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。点击页面上的“导入角色”按钮即可安装 Petdex 角色文件夹或 `.zip` 压缩包（格式要求见 [docs/pet-format.md](docs/pet-format.md)），导入后立即生效并自动切换；也可以手动把角色目录放入 `~/.petdex/pets` 后重启。Everby 不会修改外部角色目录中的已有内容。
+首次启动后，可在管理窗口的“角色”页面切换 Daily 或本机已有的 Petdex 角色。导入新角色与动作扩展的方式见下文。
 
-### 从 SoulDesk 升级
+## 导入角色与动作
 
-Everby 是 SoulDesk 的新名称。首次启动 Everby 时，应用会将旧 `SoulDesk` 用户目录中的数据库、加密凭据和动作扩展复制到新的 Everby 数据目录，并将 `souldesk.db` 升级为 `everby.db`。旧消息、计划、人设与摘要会事务化迁移到新表，迁移前生成备份且原表保持不变。新的资源协议与环境变量分别使用 `everby://` 和 `EVERBY_*`，旧 `souldesk://` 与 `SOULDESK_*` 入口暂时保留兼容。已有 `.soulmotion` 动作扩展无需重新打包。
+### 导入角色
+
+1. 管理窗口 → **角色** → **导入角色**，选择 Petdex 角色文件夹或 `.zip` 压缩包，校验通过后立即生效并自动切换，无需重启。
+2. 也可以手动把角色目录复制到 `~/.petdex/pets/`（可用 `EVERBY_PETDEX_ROOT` 修改路径），重启后生效。
+
+同名角色已存在时导入会被拒绝，不会覆盖；Everby 不会修改外部角色目录中的已有内容。角色格式（目录结构、pet.json、persona 人设块、8×9 动画图集）见 [docs/pet-format.md](docs/pet-format.md)。
+
+### 导入动作扩展
+
+新动作统一以 `.soulmotion` 扩展包追加，不修改基础角色图集：
+
+1. 管理窗口 → **动作** → **扩展包** → **导入 .soulmotion**，选择扩展包文件即可安装。
+2. 每个扩展包可按角色启用、停用或卸载；停用后动作保留在库里，但不参与播放。
+
+仓库附带的 `examples/motions/daily-routines.soulmotion` 会在首次启动时为 Daily 自动安装。动作包作者可以使用 CLI 校验与打包（见“开发与验证”），格式与安全约束见 [docs/soulmotion-format.md](docs/soulmotion-format.md)。
+
+### 用 Codex Skills 创建角色与动作包
+
+仓库的 [`skills/`](skills/) 目录提供三个面向 Everby 资源工作流的 Codex Skill。它们不是聊天提示词模板：每个 Skill 都定义了适用场景、处理步骤、校验规则和可执行脚本，Codex 会按任务选择并完成对应工作流。
+
+#### 安装与启用
+
+先在 Codex 中打开 Everby 仓库，并在仓库根目录执行 `pnpm install`。然后将需要的完整 Skill 目录（必须包含 `SKILL.md` 和 `scripts/`）复制或链接到 `~/.codex/skills/`：
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force "$HOME\.codex\skills"
+Copy-Item -Recurse -Force .\skills\everby-* "$HOME\.codex\skills\"
+```
+
+```bash
+# macOS / Linux
+mkdir -p ~/.codex/skills
+cp -R skills/everby-* ~/.codex/skills/
+```
+
+安装后新建一个 Codex 任务以重新加载 Skills。日常使用时可以直接描述需求，让 Codex 根据 `description` 自动选择 Skill；需要明确指定时，在提示词开头写 `$Skill名称`。
+
+#### 从图片创建新角色
+
+使用 [everby-pet-from-image](skills/everby-pet-from-image/SKILL.md)。提供一张或多张角色参考图，并说明角色 ID、显示名称、画风和人设要求：
+
+```text
+$everby-pet-from-image
+把这张参考图制作成 Q 版像素风 Everby 桌宠。
+角色 ID 为 nu-gundam，名称为 Nu Gundam，性格冷静简练。
+```
+
+Codex 会先判断素材是可以直接重切的精灵图，还是需要重新设计的立绘；只有立绘时会先统一角色造型，再逐行制作待机、行走、挥手、跳跃、失落、伸展、工作和检查等 9 组动画。每行确认后才继续，最后清理背景溢色、组装为 8×9 图集、写入 `persona`，并运行格式校验。产物是包含 `pet.json` 与 `spritesheet.webp` 的角色目录，可在“角色 → 导入角色”中直接选择。
+
+#### 校验并安装现成角色
+
+使用 [everby-pet-install](skills/everby-pet-install/SKILL.md)。输入可以是 Petdex 角色文件夹或 ZIP：
+
+```text
+$everby-pet-install 校验并安装 C:\Downloads\lulu-capybara.zip
+```
+
+Codex 会定位真正的角色根目录，检查 `pet.json`、角色 ID、图集文件名和 8×9 网格尺寸。缺少清单或文件名不规范时可以修复；图集尺寸错误时会停止并报告，不会强行缩放导致切片错位。校验通过后安装到 `~/.petdex/pets/<id>`，同名角色存在时会先询问，不会静默覆盖原文件。
+
+#### 为已有角色制作动作扩展
+
+使用 [everby-motion-pack](skills/everby-motion-pack/SKILL.md)。说明目标角色、动作表现、触发语义以及是否循环：
+
+```text
+$everby-motion-pack
+给 Daily 制作一个被连续点击时显得不耐烦的动作，单次播放，语义使用 confused。
+```
+
+Codex 会设计动作 ID 和语义，从参考素材生成或整理为 192×208 的透明帧，生成并完善 `motion.json`，再执行 `motion:build` 与 `motion:validate`。最终产物是可导入的 `.soulmotion` 文件；在“动作 → 扩展包”安装后，可以在动作库预览，并加入状态动作池或绑定到点击、对话和提醒事件。
+
+三个 Skill 的边界是：创建完整角色用 `everby-pet-from-image`，安装或修复现成角色用 `everby-pet-install`，给已有角色追加动作才用 `everby-motion-pack`。所有脚本都应从 Everby 仓库根目录运行，只有校验结果为 `ok: true` 或 `motion:validate` 通过才算完成。
 
 ## 配置模型
 
@@ -106,9 +177,9 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-角色格式（目录结构、pet.json、8×9 图集网格）见 [docs/pet-format.md](docs/pet-format.md)。仓库还附带两个 ZCode agent skills:[`skills/everby-pet-install`](skills/everby-pet-install/SKILL.md)（校验、适配并安装 Petdex 角色包）与 [`skills/everby-pet-from-image`](skills/everby-pet-from-image/SKILL.md)（从参考图生成新角色）。把它们复制或链接到 `~/.zcode/skills/` 或本仓库的 `.zcode/skills/` 后即可被 ZCode 自动发现。
+角色格式（目录结构、pet.json、8×9 图集网格）见 [docs/pet-format.md](docs/pet-format.md)；用 AI 创建角色与动作包的三个 Codex skills 见上文“导入角色与动作”。
 
-后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理状态时间预算、动作权重、事件优先级和回退。默认只有不可删除的“常规”状态，用户可以创建带独立时长、背景动作池以及点击、对话、提醒动作的自定义状态。左键点击桌宠播放互动动作，左键移动用于拖拽，右键打开聊天。仓库附带的 `examples/motions/daily-routines.soulmotion` 会为 Daily 首次自动安装，也可以通过设置页手动导入其他扩展。
+后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理状态时间预算、动作权重、事件优先级和回退。默认只有不可删除的“常规”状态，用户可以创建带独立时长、背景动作池以及点击、对话、提醒动作的自定义状态。左键点击桌宠播放互动动作，左键移动用于拖拽，右键打开聊天。
 
 ## 打包
 
