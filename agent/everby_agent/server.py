@@ -49,6 +49,9 @@ class AgentServer:
             return self._runtime.snapshot(pet_id)
         if method == "conversation.clear":
             return {"conversationEpoch": repo.clear_conversation(pet_id)}
+        if method == "pet.delete":
+            await self._runtime.delete_pet_data(pet_id)
+            return {"ok": True}
         if method == "persona.update":
             return self._runtime.update_persona(pet_id, dict(params.get("patch") or {}))
         if method == "todo.list":

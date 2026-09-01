@@ -28,6 +28,8 @@ describe("PythonAgentClient protocol v2", () => {
       const todo = await agent.createTodo("daily", { title });
       expect(todo.title).toBe("Unicode 💪 reminder");
       expect((await agent.snapshot("daily")).todos[0]?.title).toBe("Unicode 💪 reminder");
+      await agent.deletePetData("daily");
+      expect(await agent.snapshot("daily")).toMatchObject({ messages: [], todos: [], memories: [] });
     } finally { agent.close(); await new Promise((resolve) => setTimeout(resolve, 500)); await cleanup(path); }
   }, 20_000);
 

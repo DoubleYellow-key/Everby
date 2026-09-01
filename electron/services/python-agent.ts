@@ -103,6 +103,7 @@ export class PythonAgentClient {
     }) as any;
   }
   async clearConversation(petId: string): Promise<void> { await this.call("conversation.clear", { petId }); }
+  async deletePetData(petId: string): Promise<void> { await this.call("pet.delete", { petId }); }
   async updatePersona(petId: string, patch: Partial<PersonaProfile>): Promise<PersonaProfile> { return await this.call("persona.update", { petId, patch }) as PersonaProfile; }
   async createTodo(petId: string, input: CreateTodoInput): Promise<TodoItem> { return await this.call("todo.create", { petId, input }) as TodoItem; }
   async updateTodo(petId: string, id: string, patch: UpdateTodoInput): Promise<TodoItem> { return await this.call("todo.update", { petId, id, patch }) as TodoItem; }

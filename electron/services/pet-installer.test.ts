@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import yazl from "yazl";
-import { installPet } from "./pet-installer";
+import { installPet, removePet } from "./pet-installer";
 import { discoverPets } from "./pet-catalog";
 
 const directories: string[] = [];
@@ -140,5 +140,28 @@ describe("installPet", () => {
     const file = join(directory, "notes.txt");
     await writeFile(file, "hello");
     await expect(installPet(file, join(directory, "pets"))).rejects.toThrow("请选择角色文件夹或 .zip 压缩包");
+  });
+});
+
+describe("removePet", () => {
+  it("removes only a direct Petdex child directory", async () => {
+    const directory = scratch();
+    const petdexRoot = join(directory, "pets");
+    await installPet(await makePetFolder(directory, "nova"), petdexRoot);
+    await removePet("nova", petdexRoot);
+    expect(await discoverPets(petdexRoot, join(directory, "missing"))).toEqual([]);
+  });
+
+  it("rejects unsafe ids and symbolic-link role directories", async () => {
+    const directory = scratch();
+    const petdexRoot = join(directory, "pets");
+    await mkdir(petdexRoot, { recursive: true });
+    await expect(removePet("../outside", petdexRoot)).rejects.toThrow("角色 ID 不合法");
+    if (process.platform !== "win32") {
+      const { symlink } = await import("node:fs/promises");
+      const outside = await makePetFolder(directory, "outside");
+      await symlink(outside, join(petdexRoot, "linked"), "dir");
+      await expect(removePet("linked", petdexRoot)).rejects.toThrow("符号链接");
+    }
   });
 });

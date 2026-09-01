@@ -19,7 +19,7 @@ import { migrateSoulDeskUserData } from "./services/brand-migration";
 import { MotionService } from "./services/motion-service";
 import { resolveAppIconPath } from "./services/app-icon";
 import { discoverPets, type CatalogPet } from "./services/pet-catalog";
-import { installPet } from "./services/pet-installer";
+import { installPet, removePet } from "./services/pet-installer";
 import { PythonAgentClient } from "./services/python-agent";
 import { SecretStore } from "./services/secret-store";
 
@@ -471,6 +471,26 @@ function registerIpc(): void {
     await refreshPetCatalog();
     await broadcast();
     return petCatalog.find((pet) => pet.id === installed.id) ?? null;
+  });
+  ipcMain.handle("pet:delete", async (event, petId: unknown) => {
+    trusted(event);
+    const id = packIdSchema.parse(petId);
+    const pet = petCatalog.find((item) => item.id === id);
+    if (!pet) throw new Error("角色不存在或资源不可用");
+    if (pet.source !== "petdex") throw new Error("Everby 内置角色不能删除");
+    for (const controller of requests.values()) controller.abort();
+    await removePet(id, petdexRoot());
+    database.deletePetData(id);
+    await agent.deletePetData(id);
+    await refreshPetCatalog();
+    const activeId = database.getActivePetId();
+    database.migrateActionSystemV3(activeId, DAILY_DEFAULT_ACTION_RULES, defaultActionProfiles(activeId));
+    database.migrateClickInteractionV1(activeId);
+    database.migrateActionStatesV1(activeId, defaultActionProfiles(activeId)[0]);
+    await configureAgent();
+    scheduleActionModeExpiry(database.getActionMode(activeId));
+    refreshTrayMenu();
+    await broadcast();
   });
   ipcMain.handle("window:open-chat", (event) => { trusted(event); openChat(); });  ipcMain.handle("window:open-manager", (event) => { trusted(event); createManagerWindow(); });
   ipcMain.on("pet:interactive", (event, interactive: unknown) => { trusted(event); if (typeof interactive !== "boolean") return; petWindow?.setIgnoreMouseEvents(!interactive, { forward: true }); });

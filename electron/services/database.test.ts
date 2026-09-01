@@ -34,6 +34,31 @@ describe("AppDatabase desktop-domain ownership", () => {
     database.close();
   });
 
+  it("deletes pet-owned action state while preserving reusable motion packs", () => {
+    const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    database.saveMotionPack({ packId: "focus", version: "1.0.0", name: "Focus", targetPetId: "boba", enabled: true, animationCount: 2 }, join(directory, "focus"));
+    database.createActionRule("boba", {
+      name: "Click", actionId: "jump", enabled: true, durationSeconds: 4,
+      trigger: { type: "event", event: "pet_click", probability: 1, cooldownSeconds: 0 }
+    });
+    const profile = database.createActionProfile("boba", {
+      name: "工作", activityRatio: 0.8, strategy: "fixed", items: [{ actionId: "working", weight: 1 }],
+      fallbackActionId: "working", actionDurationSeconds: 90, defaultDurationMinutes: 25, eventActions: {}
+    });
+    database.startActionMode("boba", profile.mode, 25, "manual", 1_000);
+    database.setInitializationVersion("action-system:boba", 3);
+
+    database.deletePetData("boba");
+
+    expect(database.listActionRules("boba")).toEqual([]);
+    expect(database.listActionProfiles("boba")).toEqual([]);
+    expect(database.getActionMode("boba", 2_000).mode).toBe("normal");
+    expect(database.getInitializationVersion("action-system:boba")).toBe(0);
+    expect(database.listMotionPacks("boba")).toHaveLength(1);
+    database.close();
+  });
+
   it("persists action rules by pet and records the last trigger across restarts", () => {
     const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
     const path = join(directory, "app.db");

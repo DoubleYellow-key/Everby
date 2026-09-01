@@ -296,6 +296,27 @@ class AgentRuntime:
                                        description=self.active_pet_description, defaults=self.active_pet_persona)
         return repo.update_persona(pet_id, patch)
 
+    async def delete_pet_data(self, pet_id: str) -> None:
+        repo = self.require_repository()
+        if pet_id == self.active_pet_id:
+            for task in self.tasks.values():
+                task.cancel()
+            self.tasks.clear()
+            if self.curator:
+                await self.curator.close()
+                self.curator = None
+            if self.scheduler:
+                await self.scheduler.close()
+                self.scheduler = None
+        epochs = {repo.epoch(pet_id)}
+        epochs.update(row[0] for row in repo.db.execute(
+            "SELECT DISTINCT epoch FROM agent_messages WHERE pet_id=?", (pet_id,)
+        ))
+        if self.checkpointer:
+            for epoch in epochs:
+                await self.checkpointer.adelete_thread(f"pet:{pet_id}:{epoch}")
+        repo.delete_pet_data(pet_id)
+
     def update_presence(self, params: dict[str, Any]) -> None:
         if self.scheduler:
             self.scheduler.update_presence(str(params.get("petId") or self.active_pet_id),

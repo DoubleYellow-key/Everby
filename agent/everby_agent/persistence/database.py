@@ -124,6 +124,18 @@ class AgentRepository:
         self.db.commit()
         return epoch
 
+    def delete_pet_data(self, pet_id: str) -> None:
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self.db.execute("DELETE FROM agent_memory_fts WHERE pet_id=?", (pet_id,))
+            for table in ("agent_messages", "agent_todos", "agent_memories", "agent_personas", "agent_settings"):
+                self.db.execute(f"DELETE FROM {table} WHERE pet_id=?", (pet_id,))
+            self.db.execute("DELETE FROM agent_meta WHERE key=?", (f"epoch:{pet_id}",))
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def add_message(self, pet_id: str, role: str, content: str, message_id: str | None = None,
                     created_at: int | None = None, attachments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         if role not in {"user", "assistant"}:

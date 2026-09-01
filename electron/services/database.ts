@@ -99,6 +99,24 @@ export class AppDatabase {
   getActivePetId(): string { return this.getJson("activePet", { id: "daily" }).id; }
   setActivePetId(petId: string): void { this.setJson("activePet", { id: petId }); }
 
+  deletePetData(petId: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM action_rules WHERE pet_id = ?").run(petId);
+      this.db.prepare("DELETE FROM action_profiles WHERE pet_id = ?").run(petId);
+      this.db.prepare("DELETE FROM action_mode_sessions WHERE pet_id = ?").run(petId);
+      this.db.prepare("DELETE FROM action_rules_v2_archive WHERE pet_id = ?").run(petId);
+      this.db.prepare("DELETE FROM action_profiles_v3_archive WHERE pet_id = ?").run(petId);
+      for (const name of ["action-system", "click-interaction", "action-states"]) {
+        this.db.prepare("DELETE FROM kv WHERE key = ?").run(`initialization:${name}:${petId}`);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   getInitializationVersion(name: string): number { return this.getJson(`initialization:${name}`, { version: 0 }).version; }
   setInitializationVersion(name: string, version: number): void { this.setJson(`initialization:${name}`, { version }); }
 

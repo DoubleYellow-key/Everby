@@ -294,6 +294,7 @@ export interface EverbyApi {
   getPetRuntime(): Promise<PetRuntime>;
   selectPet(petId: string): Promise<void>;
   importPet(): Promise<PetSummary | null>;
+  deletePet(petId: string): Promise<void>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   updatePersona(patch: Partial<PersonaProfile>): Promise<PersonaProfile>;
   updateModel(patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }): Promise<ModelSettings>;

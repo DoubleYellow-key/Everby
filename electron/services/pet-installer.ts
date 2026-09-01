@@ -1,5 +1,5 @@
 import { cp, lstat, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import sharp from "sharp";
 import { SAFE_ID } from "./pet-catalog";
 import { extractZip } from "./zip-extract";
@@ -86,4 +86,16 @@ export async function installPet(sourcePath: string, petdexRoot: string): Promis
     await rm(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
     throw error;
   }
+}
+
+export async function removePet(id: string, petdexRoot: string): Promise<void> {
+  if (!SAFE_ID.test(id)) throw new Error("角色 ID 不合法");
+  const root = resolve(petdexRoot);
+  const target = resolve(root, id);
+  if (dirname(target) !== root) throw new Error("角色路径越界");
+  const info = await lstat(target).catch(() => null);
+  if (!info) throw new Error("角色不存在或已经删除");
+  if (info.isSymbolicLink()) throw new Error("不能删除符号链接角色");
+  if (!info.isDirectory()) throw new Error("角色路径不是目录");
+  await rm(target, { recursive: true, force: false, maxRetries: 5, retryDelay: 100 });
 }

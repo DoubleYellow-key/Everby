@@ -80,6 +80,23 @@ class AgentRepositoryTests(unittest.TestCase):
         self.assertEqual([item["content"] for item in self.repo.list_messages("daily")], ["daily message"])
         self.assertEqual([item["title"] for item in self.repo.list_todos("nova")], ["nova todo"])
 
+    def test_delete_pet_data_removes_only_the_selected_pet(self):
+        self.repo.add_message("nova", "user", "private message")
+        self.repo.create_todo("nova", "private todo")
+        self.repo.remember("nova", "preference", "Likes jasmine tea")
+        self.repo.update_persona("nova", {"name": "Nova"})
+        self.repo.clear_conversation("nova")
+        self.repo.add_message("daily", "user", "keep me")
+
+        self.repo.delete_pet_data("nova")
+
+        self.assertEqual(self.repo.list_messages("nova"), [])
+        self.assertEqual(self.repo.list_todos("nova"), [])
+        self.assertEqual(self.repo.list_memories("nova"), [])
+        self.assertEqual(self.repo.epoch("nova"), 0)
+        self.assertEqual([item["content"] for item in self.repo.list_messages("daily")], ["keep me"])
+        self.assertEqual(self.repo.db.execute("SELECT COUNT(*) FROM agent_personas WHERE pet_id='nova'").fetchone()[0], 0)
+
     def test_todo_writes_are_idempotent_and_deduplicated(self):
         first = self.repo.create_todo("daily", "  Write weekly report  ", run_id="run", tool_call_id="call")
         retried = self.repo.create_todo("daily", "ignored", run_id="run", tool_call_id="call")

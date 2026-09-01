@@ -12,6 +12,7 @@ const api: EverbyApi = {
   getPetRuntime: () => ipcRenderer.invoke("pet:runtime"),
   selectPet: (petId: string) => ipcRenderer.invoke("pet:select", petId),
   importPet: () => ipcRenderer.invoke("pet:import"),
+  deletePet: (petId: string) => ipcRenderer.invoke("pet:delete", petId),
   updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
   updatePersona: (patch: Partial<PersonaProfile>) => ipcRenderer.invoke("persona:update", patch),
   updateModel: (patch: Partial<Omit<ModelSettings, "configured">> & { apiKey?: string }) => ipcRenderer.invoke("model:update", patch),
