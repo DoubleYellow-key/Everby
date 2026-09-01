@@ -181,7 +181,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 
 `analyze_turn` decides whether the turn is ordinary companionship, a question, or an operation. The post-generation quality gate checks repeated introductions, repeated forms of address, generic companion copy, and claims that an operation succeeded without tool evidence. The full path uses LangChain `create_agent`, limits tool-loop recursion to 6, allows at most two writes per turn, and applies a 45-second timeout. To-do writes are idempotent by `run_id + tool_call_id`; durable facts are deduplicated by exact content or vector similarity.
 
-The model has six companion tools by default. A seventh image tool is added only after vision capability succeeds:
+The model has seven scoped companion tools by default. An eighth image tool is added only after vision capability succeeds:
 
 | Tool | Purpose |
 | --- | --- |
@@ -191,9 +191,10 @@ The model has six companion tools by default. A seventh image tool is added only
 | `complete_todo` | Complete an item by exact ID; `list_todos` must run first |
 | `search_memories` | Search the current character's durable memories when automatic recall is insufficient |
 | `remember_memory` | Immediately store a durable fact only after an explicit request to remember it |
+| `request_pet_action` | Request at most one semantic gesture per turn; concrete animation IDs remain under Electron `ActionDirector` control |
 | `inspect_image` | Inspect only images attached by the user in the current turn through the separate vision model and return an untrusted visual observation |
 
-There are no model tools for deleting plans or memories, file access, shell execution, application control, or arbitrary networking. Streaming, tool-calling, image-understanding, and embedding support are probed independently. Models without native tool calling enter `direct_chat`: companion chat and existing memory recall remain available, while the native tool loop, image inspection, and automatic memory curation are disabled.
+There are no model tools for deleting plans or memories, choosing concrete animation IDs, file access, shell execution, application control, or arbitrary networking. Streaming, tool-calling, image-understanding, and embedding support are probed independently. Models without native tool calling enter `direct_chat`: companion chat and existing memory recall remain available, deterministic keyword action selection acts as a fallback, and the native tool loop, image inspection, and automatic memory curation are disabled.
 
 ### Short-Term and Long-Term Memory
 

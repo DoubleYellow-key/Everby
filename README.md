@@ -180,7 +180,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 
 `analyze_turn` 先确定本轮是普通陪伴、回答问题还是执行操作；生成后的质量门会检查重复自我介绍、重复称呼、空泛陪伴话术和“未执行工具却声称成功”等问题。完整工具路径使用 LangChain `create_agent`，工具循环递归上限为 6，每轮最多 2 个写操作并设置 45 秒超时；待办写入以 `run_id + tool_call_id` 幂等，长期事实通过精确内容或向量相似度去重。
 
-模型默认只能使用六个陪伴工具；视觉能力探测成功后按条件增加一个识图工具：
+模型默认只能使用七个受限陪伴工具；视觉能力探测成功后按条件增加一个识图工具：
 
 | 工具 | 用途 |
 | --- | --- |
@@ -190,9 +190,10 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
 | `complete_todo` | 按准确 ID 完成计划，调用前必须先执行 `list_todos` |
 | `search_memories` | 在自动召回不足时搜索当前角色的长期记忆 |
 | `remember_memory` | 仅在用户明确要求“记住”时立即保存长期事实 |
+| `request_pet_action` | 每轮最多请求一次语义动作；不接受具体动画 ID，由 Electron `ActionDirector` 选择可用动画 |
 | `inspect_image` | 仅识别本轮用户主动附加的图片，通过独立视觉模型返回不可信的视觉观察 |
 
-模型没有删除计划、删除记忆、文件、Shell、应用控制或任意网络工具。流式、工具调用、图片理解和 Embedding 能力会分别探测；不支持原生工具调用时进入 `direct_chat`，陪伴聊天和已有记忆召回仍可用，原生工具循环、识图与自动记忆整理会停用。
+模型没有删除计划、删除记忆、具体动画选择、文件、Shell、应用控制或任意网络工具。流式、工具调用、图片理解和 Embedding 能力会分别探测；不支持原生工具调用时进入 `direct_chat`，陪伴聊天和已有记忆召回仍可用，并通过确定性关键词逻辑降级选择动作；原生工具循环、识图与自动记忆整理会停用。
 
 ### 短期与长期记忆
 

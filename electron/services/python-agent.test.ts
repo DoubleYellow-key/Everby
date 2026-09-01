@@ -132,17 +132,20 @@ describe("PythonAgentClient protocol v2", () => {
     }
   }, 30_000);
 
-  it("runs the create_agent tool loop and persists a todo", async () => {
+  it("runs the create_agent tool loop, persists a todo and carries a semantic action", async () => {
     const server = createServer((request, response) => {
       const chunks: Buffer[] = []; request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       request.on("end", () => {
         const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages?: Array<{ role?: string }>; tool_choice?: unknown; tools?: unknown[] };
         const hasToolResult = payload.messages?.some((message) => message.role === "tool");
-        const name = payload.tool_choice ? "capability_probe" : "create_todo";
         const content = hasToolResult ? "已记下喝水。" : payload.tools?.length ? null : "OK";
-        const delta = content === null
-          ? { role: "assistant", tool_calls: [{ index: 0, id: `call-${name}`, type: "function", function: { name, arguments: name === "create_todo" ? '{"title":"喝水"}' : "{}" } }] }
-          : { role: "assistant", content };
+        const toolCalls = payload.tool_choice
+          ? [{ index: 0, id: "call-capability_probe", type: "function", function: { name: "capability_probe", arguments: "{}" } }]
+          : [
+              { index: 0, id: "call-create_todo", type: "function", function: { name: "create_todo", arguments: '{"title":"喝水"}' } },
+              { index: 1, id: "call-request_pet_action", type: "function", function: { name: "request_pet_action", arguments: '{"intent":"think"}' } }
+            ];
+        const delta = content === null ? { role: "assistant", tool_calls: toolCalls } : { role: "assistant", content };
         const finish = content === null ? "tool_calls" : "stop";
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.end(`data: ${JSON.stringify({ id: "chatcmpl-tools", object: "chat.completion.chunk", created: 1, model: "fake", choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: "chatcmpl-tools", object: "chat.completion.chunk", created: 1, model: "fake", choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`);
@@ -151,15 +154,21 @@ describe("PythonAgentClient protocol v2", () => {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve()); });
     const path = testDatabase("langgraph-tools"); const port = (server.address() as AddressInfo).port;
     const agent = new PythonAgentClient({ packaged: false, appPath: process.cwd(), resourcesPath: "" });
-    const toolEvents: string[] = []; const off = agent.onEvent((event) => { if (event.type.startsWith("tool_")) toolEvents.push(event.type); });
+    const toolEvents: string[] = []; const off = agent.onEvent((event) => {
+      if (event.type.startsWith("tool_")) toolEvents.push(`${event.type}:${String(event.data.toolName)}`);
+    });
     try {
       await agent.health();
       const configured = await agent.configure({ databasePath: path, petId: "daily", petName: "Daily", petDescription: "", timezone: "Asia/Shanghai", chat: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "test", model: "fake", temperature: 0.2 }, embedding: { baseUrl: "", apiKey: "", model: "" } });
       expect(configured.capabilities.toolCalling).toBe(true);
       const reply = await agent.streamReply({ petId: "daily", content: "提醒我喝水", onDelta: () => undefined });
       expect(reply.content).toBe("已记下喝水。");
+      expect(reply.actionIntent).toBe("think");
       expect((await agent.snapshot("daily")).todos).toMatchObject([{ title: "喝水", source: "chat" }]);
-      expect(toolEvents).toEqual(["tool_started", "tool_finished"]);
+      expect([...toolEvents].sort()).toEqual([
+        "tool_started:create_todo", "tool_finished:create_todo",
+        "tool_started:request_pet_action", "tool_finished:request_pet_action"
+      ].sort());
     } finally {
       off(); agent.close(); await new Promise((resolve) => setTimeout(resolve, 500)); await cleanup(path);
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

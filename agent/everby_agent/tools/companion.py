@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field
 from ..persistence.database import AgentRepository
 from .natural_time import infer_due_at
 
+ActionIntent = Literal[
+    "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused"
+]
+
 
 @dataclass
 class AgentContext:
@@ -23,6 +27,7 @@ class AgentContext:
     write_count: list[int] = field(default_factory=lambda: [0])
     vision_count: list[int] = field(default_factory=lambda: [0])
     listed_todos: list[bool] = field(default_factory=lambda: [False])
+    action_requests: list[dict[str, str]] = field(default_factory=list)
     operation_lock: LockType = field(default_factory=threading.Lock)
     user_input: str = ""
     attachments: list[dict[str, Any]] = field(default_factory=list)
@@ -88,6 +93,10 @@ class RememberMemoryArgs(BaseModel):
     memory_type: Literal["preference", "identity", "goal", "project", "habit", "relationship", "commitment"]
     content: str = Field(min_length=8, max_length=1000)
     confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class RequestPetActionArgs(BaseModel):
+    intent: ActionIntent = Field(description="Semantic gesture intent; never a concrete animation or action ID")
 
 
 class InspectImageArgs(BaseModel):
@@ -178,6 +187,19 @@ def remember_memory(memory_type: str, content: str, confidence: float = 1.0, sub
     return _execute(runtime, "remember_memory", operation)
 
 
+@tool(args_schema=RequestPetActionArgs)
+def request_pet_action(intent: ActionIntent, runtime: ToolRuntime[AgentContext] = None) -> dict[str, Any]:
+    """Request one visible semantic gesture when it meaningfully supports the reply. Never choose a concrete animation ID."""
+    assert runtime is not None
+    def operation() -> dict[str, Any]:
+        with runtime.context.operation_lock:
+            if runtime.context.action_requests:
+                raise RuntimeError("每轮最多请求一次对话动作")
+            runtime.context.action_requests.append({"intent": intent})
+            return {"intent": intent, "accepted": True}
+    return _execute(runtime, "request_pet_action", operation)
+
+
 @tool(args_schema=InspectImageArgs)
 async def inspect_image(question: str, attachment_ids: list[str] | None = None,
                         runtime: ToolRuntime[AgentContext] = None) -> dict[str, Any]:
@@ -205,7 +227,10 @@ async def inspect_image(question: str, attachment_ids: list[str] | None = None,
 
 
 def build_companion_tools(include_vision: bool = False):
-    tools = [get_current_time, list_todos, create_todo, complete_todo, search_memories, remember_memory]
+    tools = [
+        get_current_time, list_todos, create_todo, complete_todo,
+        search_memories, remember_memory, request_pet_action,
+    ]
     if include_vision:
         tools.append(inspect_image)
     return tools

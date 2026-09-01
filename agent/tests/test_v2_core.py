@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
-from everby_agent.graph.companion import ReplyStreamHandler, format_memory_context, merge_recalled_memories
+from everby_agent.graph.companion import ReplyStreamHandler, format_memory_context, merge_recalled_memories, resolve_action_intent
 from everby_agent.memory.filters import is_safe_memory
 from everby_agent.persistence.database import AgentRepository, DEFAULT_PERSONA_BACKGROUND
 from everby_agent.persistence.migration import migrate_legacy_data
@@ -31,6 +31,12 @@ class ProtocolV2Tests(unittest.TestCase):
     def test_accepts_protocol_v2(self):
         request = RpcRequest.model_validate({"id": "1", "protocolVersion": 2, "method": "agent.snapshot", "params": {}})
         self.assertEqual(request.protocol_version, 2)
+
+
+class ActionSelectionTests(unittest.TestCase):
+    def test_tool_request_wins_and_keywords_remain_a_fallback(self):
+        self.assertEqual(resolve_action_intent({"intent": "tired"}, "任务已经完成"), "tired")
+        self.assertEqual(resolve_action_intent(None, "任务已经完成"), "celebrate")
 
 
 class VisionProbeTests(unittest.IsolatedAsyncioTestCase):
