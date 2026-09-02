@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ImagePlus, MessageCircle, Minus, Send, Settings, Square, Trash2, X } from "lucide-react";
 import { isPendingChatPersisted, type PendingChatMessage } from "../core/chat-pending";
-import { formatChatTime, formatChatTimeTitle } from "../core/chat-time";
+import { formatChatTime, formatChatTimeTitle, shouldShowChatTime } from "../core/chat-time";
 import type { AppSnapshot, ChatImageAttachment, ChatImageSource, ChatMessage } from "../shared/contracts";
 import "./ui.css";
 
@@ -85,8 +85,8 @@ function ChatApp(): React.JSX.Element {
     </header>
     <section className="messages" aria-live="polite">
       {messages.length === 0 && !pendingMessage && <div className="chat-empty"><MessageCircle size={28}/><strong>现在想聊点什么？</strong><span>我会把重要的事留在本地记忆里。</span></div>}
-      {messages.map((message) => <div className={`message ${message.role}`} key={message.id}>{message.attachments?.length > 0 && <div className="message-images">{message.attachments.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name}/>)}</div>}<span>{message.content}</span><MessageTime timestamp={message.createdAt}/></div>)}
-      {pendingMessage && <div className={`message user optimistic ${pendingMessage.failed ? "failed" : ""}`}>{pendingMessage.attachments.length > 0 && <div className="message-images">{pendingMessage.attachments.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name}/>)}</div>}<span>{pendingMessage.content}</span>{pendingMessage.failed && <small>发送失败</small>}<MessageTime timestamp={pendingMessage.sentAt}/></div>}
+      {messages.map((message, index) => <div className={`message ${message.role}`} key={message.id} title={formatChatTimeTitle(message.createdAt)}>{message.attachments?.length > 0 && <div className="message-images">{message.attachments.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name}/>)}</div>}<span>{message.content}</span>{shouldShowChatTime(message.createdAt, messages[index - 1]?.createdAt) && <MessageTime timestamp={message.createdAt}/>}</div>)}
+      {pendingMessage && <div className={`message user optimistic ${pendingMessage.failed ? "failed" : ""}`} title={formatChatTimeTitle(pendingMessage.sentAt)}>{pendingMessage.attachments.length > 0 && <div className="message-images">{pendingMessage.attachments.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name}/>)}</div>}<span>{pendingMessage.content}</span>{pendingMessage.failed && <small>发送失败</small>}{shouldShowChatTime(pendingMessage.sentAt, messages.at(-1)?.createdAt) && <MessageTime timestamp={pendingMessage.sentAt}/>}</div>}
       {progress && !draft && <div className="message assistant progress-message"><span className="progress-dot"/>{progress}</div>}
       {draft && <div className="message assistant streaming">{draft}<span className="caret"/></div>}
       {error && <div className="inline-error" role="alert">{error}</div>}

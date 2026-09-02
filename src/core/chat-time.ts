@@ -7,6 +7,10 @@ function startOfLocalDay(timestamp: number): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
+export function shouldShowChatTime(timestamp: number, previousTimestamp?: number): boolean {
+  return previousTimestamp === undefined || startOfLocalDay(timestamp) !== startOfLocalDay(previousTimestamp);
+}
+
 export function formatChatTime(timestamp: number, now = Date.now()): string {
   const date = new Date(timestamp);
   const current = new Date(now);
