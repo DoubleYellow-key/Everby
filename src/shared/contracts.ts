@@ -1,5 +1,5 @@
 export const ACTION_INTENTS = [
-  "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused"
+  "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused", "move"
 ] as const;
 
 export type ActionIntent = (typeof ACTION_INTENTS)[number];

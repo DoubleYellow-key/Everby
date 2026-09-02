@@ -2,6 +2,8 @@
 
 动作扩展是一个 ZIP 归档，扩展名为 `.soulmotion`。根目录必须包含 `motion.json`，动作帧为 `192x208`、带透明通道的 PNG 或 WebP。
 
+`intents` 使用固定语义词表，其中 `move` 表示移动或拖动反馈。桌宠被拖动时会优先播放当前角色可用的 `move` 动作；未提供时回退到基础拖动动作或待机。
+
 ```json
 {
   "formatVersion": 1,

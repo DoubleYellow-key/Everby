@@ -84,5 +84,5 @@ await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 console.log(JSON.stringify({
   motionJson: output,
   actions: groups.map((group) => ({ id: group.id, frames: group.files.length })),
-  warnings: ["intents 目前是占位值 idle,构建前请按动作语义从 idle/greet/happy/encourage/think/work/wait/celebrate/tired/confused 中改写"],
+  warnings: ["intents 目前是占位值 idle,构建前请按动作语义从 idle/greet/happy/encourage/think/work/wait/celebrate/tired/confused/move 中改写"],
 }, null, 2));

@@ -16,6 +16,14 @@ describe("motion manifest", () => {
     expect(parseMotionManifest(valid).animations[0].label).toBe("庆祝舞步");
   });
 
+  it("accepts movement semantics for drag feedback", () => {
+    const parsed = parseMotionManifest({
+      ...valid,
+      animations: [{ ...valid.animations[0], id: "flight", intents: ["move"] }]
+    });
+    expect(parsed.animations[0].intents).toEqual(["move"]);
+  });
+
   it("rejects traversal and executable assets", () => {
     expect(() => parseMotionManifest({ ...valid, animations: [{ ...valid.animations[0], frames: [{ src: "../run.js", durationMs: 100 }] }] })).toThrow();
   });

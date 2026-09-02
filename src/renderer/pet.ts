@@ -2,7 +2,7 @@ import "./pet.css";
 import { enqueueAction, shouldInterruptAction, type QueuedAction } from "../core/action-queue";
 import { actionPriority, consumeDirectorActivity, createDirectorState, switchDirectorMode, tickDirector } from "../core/action-director";
 import { selectEventRule, selectProfileEventAction } from "../core/action-rules";
-import { chooseAnimation } from "../core/behavior";
+import { chooseAnimation, chooseMovementAnimation } from "../core/behavior";
 import { classifyPetPointer, shouldStartPetDrag } from "../core/pet-pointer";
 import { frameAtTime } from "../core/timeline";
 import type { ActionRule, PetActionInput, PetActionRequest, PetActionSignal, PetAnimation, PetFrame, PetRuntime } from "../shared/contracts";
@@ -179,7 +179,7 @@ canvas.addEventListener("pointermove", (event) => {
     const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
     if (!dragging && shouldStartPetDrag(pressedPointer.button, moved)) {
       dragging = true;
-      requestAction({ actionId: "drag", source: "drag", priority: 100, durationSeconds: 60 });
+      requestAction({ actionId: chooseMovementAnimation(runtime.animations), source: "drag", priority: 100, durationSeconds: 60 });
     }
     if (dragging) { x = event.clientX - dragOffset.x; y = event.clientY - dragOffset.y; }
     return;

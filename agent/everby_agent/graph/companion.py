@@ -102,7 +102,7 @@ def select_action(text: str) -> str:
 
 def resolve_action_intent(request: dict[str, str] | None, fallback_text: str) -> str:
     if request and request.get("intent") in {
-        "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused",
+        "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused", "move",
     }:
         return request["intent"]
     return select_action(fallback_text)

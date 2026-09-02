@@ -36,6 +36,7 @@ class ProtocolV2Tests(unittest.TestCase):
 class ActionSelectionTests(unittest.TestCase):
     def test_tool_request_wins_and_keywords_remain_a_fallback(self):
         self.assertEqual(resolve_action_intent({"intent": "tired"}, "任务已经完成"), "tired")
+        self.assertEqual(resolve_action_intent({"intent": "move"}, "保持不动"), "move")
         self.assertEqual(resolve_action_intent(None, "任务已经完成"), "celebrate")
 
 

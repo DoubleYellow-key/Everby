@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseAnimation, fallbackConversationIntent, resolveDecision } from "./behavior";
+import { chooseAnimation, chooseMovementAnimation, fallbackConversationIntent, resolveDecision } from "./behavior";
 
 describe("behavior mapping", () => {
   it("maps a validated semantic intent to an available character action", () => {
@@ -8,6 +8,16 @@ describe("behavior mapping", () => {
 
   it("falls back to idle when the intent is unavailable", () => {
     expect(chooseAnimation("tired", [{ id: "idle", intents: ["idle"] }], () => 0)).toBe("idle");
+  });
+
+  it("prefers semantic movement animations and preserves the legacy drag fallback", () => {
+    expect(chooseMovementAnimation([
+      { id: "idle", intents: ["idle"] },
+      { id: "drag", intents: [] },
+      { id: "nu-flight", intents: ["move"] }
+    ], () => 0)).toBe("nu-flight");
+    expect(chooseMovementAnimation([{ id: "idle", intents: ["idle"] }, { id: "drag", intents: [] }], () => 0)).toBe("drag");
+    expect(chooseMovementAnimation([{ id: "idle", intents: ["idle"] }], () => 0)).toBe("idle");
   });
 
   it("sanitizes malformed model decisions", () => {

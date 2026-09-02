@@ -12,7 +12,7 @@ from ..persistence.database import AgentRepository
 from .natural_time import infer_due_at
 
 ActionIntent = Literal[
-    "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused"
+    "idle", "greet", "happy", "encourage", "think", "work", "wait", "celebrate", "tired", "confused", "move"
 ]
 
 

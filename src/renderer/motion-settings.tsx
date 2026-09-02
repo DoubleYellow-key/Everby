@@ -6,7 +6,7 @@ import { PageTitle, Toggle } from "./components";
 
 type MotionView = "library" | "modes" | "rules" | "packs";
 type DraftRule = CreateActionRuleInput & { id?: string };
-const intentLabels: Record<ActionIntent, string> = { idle: "待机", greet: "问候", happy: "开心", encourage: "鼓励", think: "思考", work: "工作", wait: "等待", celebrate: "庆祝", tired: "疲劳", confused: "困惑" };
+const intentLabels: Record<ActionIntent, string> = { idle: "待机", greet: "问候", happy: "开心", encourage: "鼓励", think: "思考", work: "工作", wait: "等待", celebrate: "庆祝", tired: "疲劳", confused: "困惑", move: "移动" };
 const stateEventLabels: Record<ActionRuleEvent, string> = { pet_click: "点击桌宠", conversation_intent: "对话回应", reminder: "提醒到期" };
 
 function newEventRule(actionId: string): DraftRule {

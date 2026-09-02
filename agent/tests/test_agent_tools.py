@@ -27,9 +27,9 @@ class CompanionToolTests(unittest.TestCase):
         self.assertNotIn("action_id", schema["properties"])
         context = AgentContext(repository=None, pet_id="daily", run_id="run")  # type: ignore[arg-type]
         runtime = SimpleNamespace(context=context)
-        result = request_pet_action.func(intent="tired", runtime=runtime)
-        self.assertEqual(result, {"intent": "tired", "accepted": True})
-        self.assertEqual(context.action_requests, [{"intent": "tired"}])
+        result = request_pet_action.func(intent="move", runtime=runtime)
+        self.assertEqual(result, {"intent": "move", "accepted": True})
+        self.assertEqual(context.action_requests, [{"intent": "move"}])
         with self.assertRaisesRegex(RuntimeError, "最多请求一次"):
             request_pet_action.func(intent="happy", runtime=runtime)
 

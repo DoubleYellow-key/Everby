@@ -9,7 +9,7 @@ description: 为 Everby 桌宠角色构建 .soulmotion 动作扩展包(设计动
 
 ## 1. 设计动作
 
-- 每个动作必须声明语义意图 `intents`,从固定词表选:`idle`(待机)、`greet`(打招呼)、`happy`(开心)、`encourage`(鼓励)、`think`(思考)、`work`(工作)、`wait`(等待)、`celebrate`(庆祝)、`tired`(疲惫)、`confused`(困惑)。意图决定 ActionDirector 在什么对话/事件语境下选中该动作,至少填一个。
+- 每个动作必须声明语义意图 `intents`,从固定词表选:`idle`(待机)、`greet`(打招呼)、`happy`(开心)、`encourage`(鼓励)、`think`(思考)、`work`(工作)、`wait`(等待)、`celebrate`(庆祝)、`tired`(疲惫)、`confused`(困惑)、`move`(移动/拖动反馈)。意图决定 ActionDirector 在什么对话/事件语境下选中该动作,至少填一个。拖动桌宠时优先选择 `move` 动作,没有时回退基础 `drag` 或待机。
 - 动作 ID 规则:以字母或数字开头,只能含字母、数字、`_`、`-`,最长 80 字符;**不能覆盖 10 个基础动作**:`idle`、`run-right`、`run-left`、`wave`、`jump`、`failed`、`stretch`、`working`、`review`、`drag`。
 - `loop: true` 用于状态长动作(专注工作、休息);`false` 用于一次性反馈(欢呼、伸展)。`weight` 默认 1,越大越容易被选为常态背景动作。
 - 帧时长 20–60000ms。节奏参考:待机/工作循环 220–360ms,欢快动作 150–260ms,关键姿势可短暂停留(如 650ms)。

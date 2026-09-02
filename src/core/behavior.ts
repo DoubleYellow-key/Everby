@@ -35,6 +35,16 @@ export function chooseAnimation(intent: ActionIntent, animations: ActionCandidat
   return pool.at(-1)?.id ?? "idle";
 }
 
+export function chooseMovementAnimation(animations: ActionCandidate[], random = Math.random): string {
+  if (animations.some((animation) => animation.intents.includes("move"))) {
+    return chooseAnimation("move", animations, random);
+  }
+  return animations.find((animation) => animation.id === "drag")?.id
+    ?? animations.find((animation) => animation.id === "idle")?.id
+    ?? animations[0]?.id
+    ?? "idle";
+}
+
 export function fallbackConversationIntent(text: string): ActionIntent {
   const value = text.toLowerCase();
   if (/(成功|完成|搞定|通过|太好了|恭喜|success|done|passed|congrat)/i.test(value)) return "celebrate";
