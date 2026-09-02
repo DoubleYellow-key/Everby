@@ -154,6 +154,16 @@ body:has(.chat-shell) { background: transparent; padding: 8px; }
 .message-images img { display: block; width: 100%; max-height: 180px; object-fit: cover; border-radius: 5px; }
 .message-images img:only-child { grid-column: 1 / -1; }
 .message > span { display: block; }
+.message-time {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+}
+.message.user .message-time { color: rgba(255, 255, 255, 0.68); text-align: right; }
 
 /* ---------- 管理窗口骨架 ---------- */
 body:has(.manager-shell), body:has(.manager-loading) { background: var(--sidebar-bg); }
