@@ -18,10 +18,31 @@ export class AppDatabase {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS motion_packs (pack_id TEXT PRIMARY KEY, version TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL, animation_count INTEGER NOT NULL, install_path TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS motion_packs (
+        pack_id TEXT NOT NULL, version TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL,
+        animation_count INTEGER NOT NULL, install_path TEXT NOT NULL, target_pet_id TEXT NOT NULL,
+        PRIMARY KEY(target_pet_id, pack_id)
+      );
     `);
-    const motionColumns = this.db.prepare("PRAGMA table_info(motion_packs)").all() as Array<{ name: string }>;
+    let motionColumns = this.db.prepare("PRAGMA table_info(motion_packs)").all() as Array<{ name: string; pk: number }>;
     if (!motionColumns.some((column) => column.name === "target_pet_id")) this.db.exec("ALTER TABLE motion_packs ADD COLUMN target_pet_id TEXT NOT NULL DEFAULT 'daily'");
+    motionColumns = this.db.prepare("PRAGMA table_info(motion_packs)").all() as Array<{ name: string; pk: number }>;
+    if (!motionColumns.some((column) => column.name === "target_pet_id" && column.pk > 0)) {
+      this.db.exec(`
+        BEGIN IMMEDIATE;
+        DROP TABLE IF EXISTS motion_packs_v2;
+        CREATE TABLE motion_packs_v2 (
+          pack_id TEXT NOT NULL, version TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL,
+          animation_count INTEGER NOT NULL, install_path TEXT NOT NULL, target_pet_id TEXT NOT NULL,
+          PRIMARY KEY(target_pet_id, pack_id)
+        );
+        INSERT INTO motion_packs_v2(pack_id, version, name, enabled, animation_count, install_path, target_pet_id)
+          SELECT pack_id, version, name, enabled, animation_count, install_path, target_pet_id FROM motion_packs;
+        DROP TABLE motion_packs;
+        ALTER TABLE motion_packs_v2 RENAME TO motion_packs;
+        COMMIT;
+      `);
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS action_rules (
         id TEXT PRIMARY KEY,
@@ -128,13 +149,19 @@ export class AppDatabase {
   }
 
   saveMotionPack(pack: MotionPackSummary, installPath: string): void {
-    this.db.prepare("INSERT INTO motion_packs(pack_id, version, name, enabled, animation_count, install_path, target_pet_id) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(pack_id) DO UPDATE SET version=excluded.version,name=excluded.name,enabled=excluded.enabled,animation_count=excluded.animation_count,install_path=excluded.install_path,target_pet_id=excluded.target_pet_id")
+    this.db.prepare("INSERT INTO motion_packs(pack_id, version, name, enabled, animation_count, install_path, target_pet_id) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(target_pet_id, pack_id) DO UPDATE SET version=excluded.version,name=excluded.name,enabled=excluded.enabled,animation_count=excluded.animation_count,install_path=excluded.install_path")
       .run(pack.packId, pack.version, pack.name, pack.enabled ? 1 : 0, pack.animationCount, installPath, pack.targetPetId);
   }
 
-  setMotionPackEnabled(packId: string, enabled: boolean): void { this.db.prepare("UPDATE motion_packs SET enabled = ? WHERE pack_id = ?").run(enabled ? 1 : 0, packId); }
-  getMotionPackPath(packId: string): string | null { return (this.db.prepare("SELECT install_path AS path FROM motion_packs WHERE pack_id = ?").get(packId) as { path: string } | undefined)?.path ?? null; }
-  deleteMotionPack(packId: string): void { this.db.prepare("DELETE FROM motion_packs WHERE pack_id = ?").run(packId); }
+  setMotionPackEnabled(targetPetId: string, packId: string, enabled: boolean): void {
+    this.db.prepare("UPDATE motion_packs SET enabled = ? WHERE target_pet_id = ? AND pack_id = ?").run(enabled ? 1 : 0, targetPetId, packId);
+  }
+  getMotionPackPath(targetPetId: string, packId: string): string | null {
+    return (this.db.prepare("SELECT install_path AS path FROM motion_packs WHERE target_pet_id = ? AND pack_id = ?").get(targetPetId, packId) as { path: string } | undefined)?.path ?? null;
+  }
+  deleteMotionPack(targetPetId: string, packId: string): void {
+    this.db.prepare("DELETE FROM motion_packs WHERE target_pet_id = ? AND pack_id = ?").run(targetPetId, packId);
+  }
 
   listActionRules(petId: string): ActionRule[] {
     return this.db.prepare("SELECT id, pet_id AS petId, name, action_id AS actionId, enabled, duration_seconds AS durationSeconds, trigger_json AS triggerJson, created_at AS createdAt, updated_at AS updatedAt, last_triggered_at AS lastTriggeredAt FROM action_rules WHERE pet_id = ? ORDER BY updated_at DESC")

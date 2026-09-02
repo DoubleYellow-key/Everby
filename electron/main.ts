@@ -229,7 +229,7 @@ async function runtimePayload(): Promise<PetRuntime> {
     });
   }
   for (const pack of database.listMotionPacks(pet.id).filter((item) => item.enabled)) {
-    const path = database.getMotionPackPath(pack.packId);
+    const path = database.getMotionPackPath(pet.id, pack.packId);
     if (path) runtime.animations.push(...await motionService.loadAnimations(path, pack.packId, pet.id, pack.name, true));
   }
   return runtime;
@@ -237,11 +237,14 @@ async function runtimePayload(): Promise<PetRuntime> {
 
 async function reconcileMotionPackTargets(): Promise<void> {
   for (const pack of database.listMotionPacks()) {
-    const path = database.getMotionPackPath(pack.packId);
+    const path = database.getMotionPackPath(pack.targetPetId, pack.packId);
     if (!path) continue;
     try {
       const manifest = await motionService.readManifest(path);
-      if (pack.targetPetId !== manifest.targetPetId) database.saveMotionPack({ ...pack, targetPetId: manifest.targetPetId }, path);
+      if (pack.targetPetId !== manifest.targetPetId) {
+        database.deleteMotionPack(pack.targetPetId, pack.packId);
+        database.saveMotionPack({ ...pack, targetPetId: manifest.targetPetId }, path);
+      }
     } catch { /* Invalid legacy packs remain removable from settings. */ }
   }
 }
@@ -256,7 +259,7 @@ async function motionCatalog(): Promise<MotionCatalog> {
     });
   }
   for (const pack of database.listMotionPacks(pet.id)) {
-    const path = database.getMotionPackPath(pack.packId);
+    const path = database.getMotionPackPath(pet.id, pack.packId);
     if (path) base.animations.push(...await motionService.loadAnimations(path, pack.packId, pet.id, pack.name, pack.enabled));
   }
   return { petId: pet.id, actions: base.animations };
@@ -551,8 +554,8 @@ function registerIpc(): void {
   ipcMain.handle("chat:clear", async (event) => { trusted(event); await agent.clearConversation(database.getActivePetId()); await broadcast(); });
   ipcMain.handle("motion:import", async (event) => { trusted(event); const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Everby 动作扩展", extensions: ["soulmotion"] }] }); return result.canceled || !result.filePaths[0] ? null : installMotion(result.filePaths[0]); });
   ipcMain.handle("motion:catalog", async (event) => { trusted(event); return motionCatalog(); });
-  ipcMain.handle("motion:enabled", async (event, packId: unknown, enabled: unknown) => { trusted(event); const id = packIdSchema.parse(packId); if (typeof enabled !== "boolean") throw new Error("扩展状态无效"); database.setMotionPackEnabled(id, enabled); await broadcast(); });
-  ipcMain.handle("motion:remove", async (event, packId: unknown) => { trusted(event); const id = packIdSchema.parse(packId); const path = database.getMotionPackPath(id); database.deleteMotionPack(id); if (path) await rm(path, { recursive: true, force: true }); await broadcast(); });
+  ipcMain.handle("motion:enabled", async (event, packId: unknown, enabled: unknown) => { trusted(event); const id = packIdSchema.parse(packId); if (typeof enabled !== "boolean") throw new Error("扩展状态无效"); database.setMotionPackEnabled(database.getActivePetId(), id, enabled); await broadcast(); });
+  ipcMain.handle("motion:remove", async (event, packId: unknown) => { trusted(event); const id = packIdSchema.parse(packId); const petId = database.getActivePetId(); const path = database.getMotionPackPath(petId, id); database.deleteMotionPack(petId, id); if (path) await rm(path, { recursive: true, force: true }); await broadcast(); });
   ipcMain.handle("motion:preview", async (event, actionId: unknown) => {
     trusted(event); const id = actionIdSchema.parse(actionId); const runtime = await runtimePayload();
     if (!runtime.animations.some((animation) => animation.id === id)) throw new Error("动作当前不可用");
@@ -664,7 +667,7 @@ async function initialize(): Promise<void> {
     }
     else if (url.hostname === "motion") {
       const [packId, ...parts] = decodeURIComponent(url.pathname.slice(1)).split("/");
-      const root = database.getMotionPackPath(packId);
+      const root = database.getMotionPackPath(activePet().id, packId);
       if (!root) return new Response("Not found", { status: 404 });
       const resolvedRoot = resolve(root);
       file = resolve(resolvedRoot, parts.join("/"));

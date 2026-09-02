@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppDatabase } from "./database";
 import { defaultActionProfiles } from "../../src/core/action-profiles";
@@ -31,6 +32,39 @@ describe("AppDatabase desktop-domain ownership", () => {
     database.saveMotionPack({ packId: "focus", version: "1.0.0", name: "Focus", targetPetId: "boba", enabled: true, animationCount: 2 }, join(directory, "focus"));
     expect(database.getActivePetId()).toBe("boba");
     expect(database.listMotionPacks("boba")).toEqual([{ packId: "focus", version: "1.0.0", name: "Focus", targetPetId: "boba", enabled: true, animationCount: 2 }]);
+    database.close();
+  });
+
+  it("isolates motion packs with the same ID by pet", () => {
+    const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
+    const database = new AppDatabase(join(directory, "app.db"));
+    database.saveMotionPack({ packId: "focus", version: "1.0.0", name: "Daily Focus", targetPetId: "daily", enabled: true, animationCount: 1 }, join(directory, "daily-focus"));
+    database.saveMotionPack({ packId: "focus", version: "2.0.0", name: "Boba Focus", targetPetId: "boba", enabled: true, animationCount: 2 }, join(directory, "boba-focus"));
+
+    expect(database.listMotionPacks()).toHaveLength(2);
+    expect(database.getMotionPackPath("daily", "focus")).toBe(join(directory, "daily-focus"));
+    expect(database.getMotionPackPath("boba", "focus")).toBe(join(directory, "boba-focus"));
+    database.setMotionPackEnabled("daily", "focus", false);
+    expect(database.listMotionPacks("daily")[0].enabled).toBe(false);
+    expect(database.listMotionPacks("boba")[0].enabled).toBe(true);
+    database.deleteMotionPack("daily", "focus");
+    expect(database.listMotionPacks("daily")).toEqual([]);
+    expect(database.listMotionPacks("boba")).toHaveLength(1);
+    database.close();
+  });
+
+  it("migrates legacy globally keyed motion packs without losing metadata", () => {
+    const directory = mkdtempSync(join(tmpdir(), "everby-db-")); directories.push(directory);
+    const path = join(directory, "app.db");
+    const legacy = new DatabaseSync(path);
+    legacy.exec("CREATE TABLE motion_packs (pack_id TEXT PRIMARY KEY, version TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL, animation_count INTEGER NOT NULL, install_path TEXT NOT NULL, target_pet_id TEXT NOT NULL)");
+    legacy.prepare("INSERT INTO motion_packs VALUES (?, ?, ?, ?, ?, ?, ?)").run("focus", "1.0.0", "Focus", 1, 2, join(directory, "focus"), "boba");
+    legacy.close();
+
+    const database = new AppDatabase(path);
+    expect(database.listMotionPacks("boba")).toEqual([{ packId: "focus", version: "1.0.0", name: "Focus", targetPetId: "boba", enabled: true, animationCount: 2 }]);
+    database.saveMotionPack({ packId: "focus", version: "1.0.0", name: "Daily Focus", targetPetId: "daily", enabled: true, animationCount: 1 }, join(directory, "daily-focus"));
+    expect(database.listMotionPacks()).toHaveLength(2);
     database.close();
   });
 

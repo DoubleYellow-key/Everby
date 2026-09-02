@@ -12,6 +12,7 @@ describe("MotionService example extension", () => {
     const directory = mkdtempSync(join(tmpdir(), "everby-motion-test-")); directories.push(directory);
     const service = new MotionService(directory);
     const installed = await service.install(resolve("examples/motions/daily-routines.soulmotion"), new Set(["idle", "wave", "jump"]), "daily");
+    expect(installed.path).toBe(join(directory, "daily", "daily-routines"));
     const actions = await service.loadAnimations(installed.path, installed.manifest.packId, "daily", installed.manifest.name, true);
     expect(installed.manifest.version).toBe("1.1.0");
     expect(actions.map((action) => action.id)).toEqual(["daily-cheer-combo", "daily-focus-cycle", "daily-reset-stretch"]);
