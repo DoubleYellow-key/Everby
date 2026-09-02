@@ -70,6 +70,8 @@ Additional animations are installed as `.soulmotion` extensions and do not modif
 1. Open **Animations -> Extension Packs -> Import .soulmotion** and select the package.
 2. Each package can be enabled, disabled, or removed per character. Disabled animations remain in the library but are not selected for playback.
 
+The package `targetPetId` must exactly match the active character. Packages are isolated per character, so different characters may safely reuse the same package and animation IDs; switching characters exposes only that character's extensions.
+
 The bundled `examples/motions/daily-routines.soulmotion` package is installed for Daily on first launch. Authors can use the CLI validation and packaging commands described under [Development and Validation](#development-and-validation). Format and security constraints are documented in [docs/soulmotion-format.md](docs/soulmotion-format.md).
 
 ### Create Characters and Animations with Codex Skills
@@ -239,6 +241,23 @@ See [docs/soulmotion-format.md](docs/soulmotion-format.md) for animation package
 pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
+
+## Publishing Installers
+
+GitHub Actions creates a GitHub Release when a `v*.*.*` tag matching the `package.json` version is pushed. Each release contains:
+
+- Windows x64 NSIS installer and portable `.exe`
+- macOS Apple Silicon `.dmg` and `.zip`
+- macOS Intel `.dmg` and `.zip`
+- `SHA256SUMS.txt` with SHA-256 checksums for every release asset
+
+```bash
+# First set package.json version, for example 0.1.0
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+An existing tag can also be republished from **Actions -> Publish desktop release -> Run workflow**. Current packages are unsigned: Windows may show a SmartScreen warning, and macOS may require users to right-click and choose **Open**. Configure Windows code signing and Apple Developer ID notarization before broad public distribution.
 
 See [docs/pet-format.md](docs/pet-format.md) for the character directory, `pet.json`, and 8x9 atlas format. The three Codex Skills described above can create, validate, and package these assets.
 

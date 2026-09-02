@@ -70,6 +70,8 @@ pnpm dev
 1. 管理窗口 → **动作** → **扩展包** → **导入 .soulmotion**，选择扩展包文件即可安装。
 2. 每个扩展包可按角色启用、停用或卸载；停用后动作保留在库里，但不参与播放。
 
+扩展包的 `targetPetId` 必须与当前角色一致。动作包按角色隔离，不同角色可以使用相同的包 ID 和动作 ID，切换角色后只会显示和播放该角色自己的扩展动作。
+
 仓库附带的 `examples/motions/daily-routines.soulmotion` 会在首次启动时为 Daily 自动安装。动作包作者可以使用 CLI 校验与打包（见“开发与验证”），格式与安全约束见 [docs/soulmotion-format.md](docs/soulmotion-format.md)。
 
 ### 用 Codex Skills 创建角色与动作包
@@ -238,6 +240,23 @@ pnpm build           # Electron 渲染与主进程构建
 pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
+
+## 发布安装包
+
+GitHub Actions 会在推送与 `package.json` 版本一致的 `v*.*.*` 标签时创建 GitHub Release，并上传：
+
+- Windows x64：NSIS 安装版与便携版 `.exe`
+- macOS Apple Silicon：`.dmg` 与 `.zip`
+- macOS Intel：`.dmg` 与 `.zip`
+- `SHA256SUMS.txt`：全部发布文件的 SHA-256 校验值
+
+```bash
+# 先修改 package.json 中的 version，例如 0.1.0
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可以在 GitHub 的 **Actions → Publish desktop release → Run workflow** 中输入一个已经存在的标签重新发布。当前产物未配置商业代码签名：Windows 可能显示 SmartScreen 提示，macOS 可能要求右键选择“打开”；正式大范围分发前建议配置 Windows 签名证书与 Apple Developer ID 公证。
 
 角色格式（目录结构、pet.json、8×9 图集网格）见 [docs/pet-format.md](docs/pet-format.md)；用 AI 创建角色与动作包的三个 Codex skills 见上文“导入角色与动作”。
 

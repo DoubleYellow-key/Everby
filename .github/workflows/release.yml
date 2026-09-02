@@ -1,0 +1,127 @@
+name: Publish desktop release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v0.1.0
+        required: true
+        type: string
+      prerelease:
+        description: Mark this release as a prerelease
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag matches package version
+        run: node -e "const p=require('./package.json'); if ('v'+p.version !== process.env.RELEASE_TAG) throw new Error('Tag '+process.env.RELEASE_TAG+' does not match package version v'+p.version)"
+      - run: python -m pip install -r agent/requirements-runtime.txt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm agent:test
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            command: dist:win
+            artifact: windows-x64
+            files: release/*.exe
+          - os: macos-14
+            command: dist:mac:arm64
+            artifact: macos-arm64
+            files: |-
+              release/*.dmg
+              release/*-mac.zip
+          - os: macos-15-intel
+            command: dist:mac:x64
+            artifact: macos-x64
+            files: |-
+              release/*.dmg
+              release/*-mac.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r agent/requirements-build.txt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: everby-${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: everby-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SHA-256 checksums
+        run: cd release-assets && sha256sum * > SHA256SUMS.txt
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          elif [ "$PRERELEASE" = "true" ]; then
+            gh release create "$RELEASE_TAG" release-assets/* --verify-tag --generate-notes --prerelease --title "Everby ${RELEASE_TAG#v}"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* --verify-tag --generate-notes --title "Everby ${RELEASE_TAG#v}"
+          fi
