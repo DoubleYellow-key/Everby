@@ -8,6 +8,20 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 
 ![Daily 敲代码动画](resources/pet-qa/daily/coding.gif)
 
+## 下载与安装
+
+当前稳定版本是 [Everby v0.1.0](https://github.com/DoubleYellow-key/Everby/releases/tag/v0.1.0)：
+
+| 平台 | 下载 | 说明 |
+| --- | --- | --- |
+| Windows x64 | [安装版](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby.Setup.0.1.0.exe) | 推荐大多数 Windows 用户使用，可选择安装目录 |
+| Windows x64 | [便携版](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby.0.1.0.exe) | 无需安装，下载后直接运行 |
+| macOS Apple Silicon | [DMG](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby-0.1.0-arm64.dmg) | 适用于 M1、M2、M3、M4 等 Apple 芯片 |
+| macOS Intel | [DMG](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby-0.1.0.dmg) | 适用于 Intel 芯片 Mac |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/SHA256SUMS.txt) | 校验下载文件是否完整 |
+
+当前安装包尚未签名。Windows 出现 SmartScreen 提示时，确认文件来自本仓库后可选择“更多信息 → 仍要运行”；macOS 首次启动时可右键 Everby 选择“打开”，或前往“系统设置 → 隐私与安全性 → 仍要打开”。后续版本和全部构建产物统一发布在 [GitHub Releases](https://github.com/DoubleYellow-key/Everby/releases)。
+
 ## 主要功能
 
 - 透明、置顶且不抢焦点的桌宠窗口，支持拖动、点击、走动和跨显示器定位

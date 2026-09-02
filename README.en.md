@@ -8,6 +8,20 @@ The current release includes the original character **Daily** and can also disco
 
 ![Daily coding animation](resources/pet-qa/daily/coding.gif)
 
+## Download and Install
+
+The current stable release is [Everby v0.1.0](https://github.com/DoubleYellow-key/Everby/releases/tag/v0.1.0):
+
+| Platform | Download | Notes |
+| --- | --- | --- |
+| Windows x64 | [Installer](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby.Setup.0.1.0.exe) | Recommended for most Windows users; lets you choose the install directory |
+| Windows x64 | [Portable](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby.0.1.0.exe) | Runs directly without installation |
+| macOS Apple Silicon | [DMG](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby-0.1.0-arm64.dmg) | For M1, M2, M3, M4, and newer Apple chips |
+| macOS Intel | [DMG](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/Everby-0.1.0.dmg) | For Intel-based Macs |
+| Integrity checks | [SHA256SUMS.txt](https://github.com/DoubleYellow-key/Everby/releases/download/v0.1.0/SHA256SUMS.txt) | Verify that downloaded files are intact |
+
+The current packages are unsigned. On Windows, after confirming that the file came from this repository, select **More info -> Run anyway** if SmartScreen appears. On macOS, right-click Everby and choose **Open** on first launch, or allow it from **System Settings -> Privacy & Security**. Future versions and all build artifacts are published under [GitHub Releases](https://github.com/DoubleYellow-key/Everby/releases).
+
 ## Features
 
 - A transparent, always-on-top desktop pet that does not steal focus, with dragging, clicking, walking, and multi-monitor positioning
