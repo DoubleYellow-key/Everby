@@ -38,7 +38,7 @@ The current packages are unsigned. On Windows, after confirming that the file ca
 - An ActionDirector that uses time budgets to control active animation ratios, with fixed or weighted animation pools, per-mode event overrides, and fallback for unavailable extension actions; the Daily example extension and six event rules are initialized on first launch
 - A yellow-and-white management UI, chat bubbles, and tray controls
 
-## Quick Start
+## Run from Source
 
 Requirements: Node.js 24+, pnpm 11+, and Python 3.10+.
 
@@ -256,39 +256,11 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-## Publishing Installers
-
-GitHub Actions creates a GitHub Release when a `v*.*.*` tag matching the `package.json` version is pushed. Each release contains:
-
-- Windows x64 NSIS installer and portable `.exe`
-- macOS Apple Silicon `.dmg` and `.zip`
-- macOS Intel `.dmg` and `.zip`
-- `SHA256SUMS.txt` with SHA-256 checksums for every release asset
-
-```bash
-# First set package.json version, for example 0.1.0
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-An existing tag can also be republished from **Actions -> Publish desktop release -> Run workflow**. Current packages are unsigned: Windows may show a SmartScreen warning, and macOS may require users to right-click and choose **Open**. Configure Windows code signing and Apple Developer ID notarization before broad public distribution.
+See [docs/releasing.md](docs/releasing.md) for the maintainer-only multi-platform packaging and GitHub Release workflow.
 
 See [docs/pet-format.md](docs/pet-format.md) for the character directory, `pet.json`, and 8x9 atlas format. The three Codex Skills described above can create, validate, and package these assets.
 
 Additional character animations should be added as `.soulmotion` packages instead of modifying the base atlas. The model emits semantic intents only; Electron's `ActionDirector` handles state time budgets, animation weights, event priorities, and fallbacks. The default **Normal** mode cannot be deleted, while users can create custom modes with their own duration, background animation pool, and click, conversation, or reminder actions. Left-click the pet to play an interaction, drag with the left mouse button to move it, and right-click to open chat.
-
-## Packaging
-
-Install PyInstaller before creating release packages:
-
-```bash
-python -m pip install -r agent/requirements-build.txt
-pnpm dist:mac:arm64
-pnpm dist:mac:x64
-pnpm dist:win
-```
-
-PyInstaller cannot cross-compile across operating systems or architectures, so each package must be built on the matching runner. On every push to `main`, `.github/workflows/build.yml` verifies macOS arm64, macOS x64, and Windows x64 by running Python tests, type checking, Vitest, and packaging in sequence. The initial release does not include code signing, automatic updates, or installer notarization.
 
 ## Data and Privacy
 
@@ -313,10 +285,6 @@ External character assets are not covered by Everby's license and are not copied
 ## Contributing
 
 Issues and pull requests are welcome. Before submitting, run at least `pnpm agent:test`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Include `pnpm test:e2e` for Electron interaction changes and a successful `pnpm motion:validate` result for `.soulmotion` changes. Character and animation assets must document their source and license; do not submit third-party IP assets without confirmed permission.
-
-## Project Status
-
-Everby is still in its initial development stage. Before a public release, add code signing and installer notarization and distribute packages through GitHub Releases instead of committing `release/` artifacts to the source repository.
 
 ## License
 

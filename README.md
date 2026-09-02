@@ -38,7 +38,7 @@ Everby 是一个面向 Windows 与 macOS 的本地桌面陪伴智能体。它使
 - 动作导演通过时间预算控制非待机占比，支持固定动作或加权动作池、状态内事件覆盖和不可用扩展动作回退；Daily 示例扩展与六条事件规则会在首次启动时初始化
 - 科技黑侧栏 + 悬浮圆角内容区的管理界面（保留品牌黄作为唯一强调色）、聊天气泡和托盘控制
 
-## 快速开始
+## 从源码运行
 
 需要 Node.js 24+、pnpm 11+ 和 Python 3.10+。
 
@@ -255,39 +255,11 @@ pnpm motion:validate -- path/to/motion.soulmotion
 pnpm motion:build -- path/to/motion-directory output.soulmotion
 ```
 
-## 发布安装包
-
-GitHub Actions 会在推送与 `package.json` 版本一致的 `v*.*.*` 标签时创建 GitHub Release，并上传：
-
-- Windows x64：NSIS 安装版与便携版 `.exe`
-- macOS Apple Silicon：`.dmg` 与 `.zip`
-- macOS Intel：`.dmg` 与 `.zip`
-- `SHA256SUMS.txt`：全部发布文件的 SHA-256 校验值
-
-```bash
-# 先修改 package.json 中的 version，例如 0.1.0
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-也可以在 GitHub 的 **Actions → Publish desktop release → Run workflow** 中输入一个已经存在的标签重新发布。当前产物未配置商业代码签名：Windows 可能显示 SmartScreen 提示，macOS 可能要求右键选择“打开”；正式大范围分发前建议配置 Windows 签名证书与 Apple Developer ID 公证。
+项目维护者的多平台打包和 GitHub Release 流程见 [docs/releasing.md](docs/releasing.md)。
 
 角色格式（目录结构、pet.json、8×9 图集网格）见 [docs/pet-format.md](docs/pet-format.md)；用 AI 创建角色与动作包的三个 Codex skills 见上文“导入角色与动作”。
 
 后续角色动作统一以 `.soulmotion` 扩展包追加，不直接修改基础角色图集。模型只输出语义意图，Electron 的 `ActionDirector` 统一处理状态时间预算、动作权重、事件优先级和回退。默认只有不可删除的“常规”状态，用户可以创建带独立时长、背景动作池以及点击、对话、提醒动作的自定义状态。左键点击桌宠播放互动动作，左键移动用于拖拽，右键打开聊天。
-
-## 打包
-
-发布构建需要先安装 PyInstaller：
-
-```bash
-python -m pip install -r agent/requirements-build.txt
-pnpm dist:mac:arm64
-pnpm dist:mac:x64
-pnpm dist:win
-```
-
-PyInstaller 不支持跨系统或跨架构编译，请在对应的 runner 上构建。`.github/workflows/build.yml` 会在推送到 `main` 时分别验证 macOS arm64、macOS x64 与 Windows x64，并依次运行 Python 测试、类型检查、Vitest 和打包。当前第一版不包含代码签名、自动更新和安装包公证。
 
 ## 数据与隐私
 
@@ -312,10 +284,6 @@ Daily 是 Everby 的原创内置角色，其运行图集与 QA 资料保存在�
 ## 参与贡献
 
 欢迎通过 Issue 或 Pull Request 提交问题、功能和文档改进。提交前请至少运行 `pnpm agent:test`、`pnpm typecheck`、`pnpm test` 和 `pnpm build`；涉及 Electron 交互时补充 `pnpm test:e2e`，涉及 `.soulmotion` 时附上 `pnpm motion:validate` 结果。角色或动作素材必须说明来源与许可，不要提交无法确认授权的第三方 IP 资源。
-
-## 当前状态
-
-Everby 仍处于第一版开发阶段。建议在公开发布前补充代码签名和安装包公证，并通过 GitHub Release 分发构建产物，不要把 `release/` 直接提交到源码仓库。
 
 ## 许可证
 
