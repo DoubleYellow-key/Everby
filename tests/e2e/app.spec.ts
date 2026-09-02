@@ -62,6 +62,13 @@ async function verifyPet(app: ElectronApplication, minimumBytes: number, screens
       Boolean(snapshot.todos.find((todo) => todo.title === "完成 Everby 提醒测试")?.completedAt)
     ))).toBe(true);
     await manager!.screenshot({ path: join(process.cwd(), "test-results/plans.png") });
+    await manager!.evaluate(() => window.everby.createTodo({ title: "知道了关闭测试", remindAt: 1 }));
+    await expect.poll(async () => pet!.locator("#speech-bubble").textContent(), { timeout: 12_000 })
+      .toContain("知道了关闭测试");
+    await expect(async () => {
+      await pet!.getByRole("button", { name: "知道了" }).click({ timeout: 1_500 });
+      await expect(pet!.locator("#speech-bubble")).not.toHaveClass(/visible/, { timeout: 800 });
+    }).toPass({ timeout: 10_000 });
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().endsWith("pet.html"))?.webContents.send("pet:action", { actionId: "working", source: "system", priority: 50, durationSeconds: 1 }));
     await pet!.waitForTimeout(450);
     const dailyOpaquePixels = await pet!.locator("#pet-canvas").evaluate((canvas: HTMLCanvasElement) => {

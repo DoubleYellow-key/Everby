@@ -10,6 +10,8 @@ import type { ActionRule, PetActionInput, PetActionRequest, PetActionSignal, Pet
 const canvas = document.querySelector<HTMLCanvasElement>("#pet-canvas")!;
 const context = canvas.getContext("2d", { alpha: true })!;
 const speechBubble = document.querySelector<HTMLDivElement>("#speech-bubble")!;
+const bubbleText = speechBubble.querySelector<HTMLDivElement>(".bubble-text")!;
+const bubbleDismiss = speechBubble.querySelector<HTMLButtonElement>("#bubble-dismiss")!;
 let runtime: PetRuntime;
 let atlas = new Image();
 let atlasAlpha: Uint8ClampedArray | null = null;
@@ -154,8 +156,10 @@ function draw(now: number): void {
   if (!dragging && animation.id === "run-left") x -= 0.075 * delta;
   x = Math.max(0, Math.min(innerWidth - width, x));
   y = Math.max(0, Math.min(innerHeight - height, y));
-  speechBubble.style.left = `${Math.max(8, Math.min(innerWidth - 268, x - 50))}px`;
+  const bubbleLeft = Math.max(8, Math.min(innerWidth - 288, x - 50));
+  speechBubble.style.left = `${bubbleLeft}px`;
   speechBubble.style.top = `${Math.max(8, y - speechBubble.offsetHeight - 10)}px`;
+  speechBubble.style.setProperty("--tail-x", `${Math.max(20, Math.min(speechBubble.offsetWidth - 28, x + width / 2 - bubbleLeft))}px`);
   drawPetFrame(frame, x, y, width, height);
   requestAnimationFrame(draw);
 }
@@ -259,6 +263,21 @@ window.everby.onPetPresence((presence) => {
   if (locked && !presence.locked) directorState = { ...createDirectorState(Date.now()), mode: runtime?.actionMode.mode ?? "normal" };
   locked = presence.locked;
 });
-window.everby.onPetSpeech((message) => { speechBubble.textContent = message; speechBubble.classList.add("visible"); setTimeout(() => speechBubble.classList.remove("visible"), 12_000); });
+let speechTimer: ReturnType<typeof setTimeout> | undefined;
+function hideSpeech(): void {
+  if (speechTimer) { clearTimeout(speechTimer); speechTimer = undefined; }
+  speechBubble.classList.remove("visible");
+}
+window.everby.onPetSpeech((message) => {
+  bubbleText.textContent = message;
+  speechBubble.classList.remove("visible");
+  void speechBubble.offsetWidth;
+  speechBubble.classList.add("visible");
+  if (speechTimer) clearTimeout(speechTimer);
+  speechTimer = setTimeout(hideSpeech, 12_000);
+});
+bubbleDismiss.addEventListener("click", hideSpeech);
+speechBubble.addEventListener("pointermove", () => window.everby.setPetInteractive(true));
+speechBubble.addEventListener("pointerleave", () => { if (!pressedPointer) window.everby.setPetInteractive(false); });
 window.addEventListener("resize", resize);
 resize(); void window.everby.getPetRuntime().then(applyRuntime); requestAnimationFrame(draw);
