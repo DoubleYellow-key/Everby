@@ -172,7 +172,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
              -> persist_turn -> select_action -> enqueue_memory_curation
 ```
 
-`analyze_turn` 先确定本轮是普通陪伴、回答问题还是执行操作；生成后的质量门会检查重复自我介绍、重复称呼、空泛陪伴话术和“未执行工具却声称成功”等问题。完整工具路径使用 LangChain `create_agent`，工具循环递归上限为 6，每轮最多 2 个写操作并设置 45 秒超时；待办写入以 `run_id + tool_call_id` 幂等，长期事实通过精确内容或向量相似度去重。
+`analyze_turn` 先确定本轮是普通陪伴、回答问题还是执行操作；生成后的质量门会检查重复自我介绍、重复称呼、空泛陪伴话术和“未执行工具却声称成功”等问题。完整工具路径使用 LangChain `create_agent`，工具循环递归上限为 10（超限时会返回明确的降级回复而不是发送失败），每轮最多 2 个写操作并设置 45 秒超时；待办写入以 `run_id + tool_call_id` 幂等，长期事实通过精确内容或向量相似度去重。
 
 模型默认只能使用七个受限陪伴工具；视觉能力探测成功后按条件增加一个识图工具：
 

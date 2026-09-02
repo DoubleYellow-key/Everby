@@ -6,6 +6,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
 from ..persistence.database import AgentRepository
@@ -131,6 +132,16 @@ def merge_recalled_memories(relevant: list[dict[str, Any]], all_memories: list[d
     return recalled[:8]
 
 
+# 工具循环上限需覆盖 系统提示词鼓励的 时间解析 + 写操作 + 语义动作 三连调用（每个往返占 2 步）
+AGENT_RECURSION_LIMIT = 10
+
+# 该文案会经过回复质量门，措辞不得包含“已+完成/创建/记住”等表述，否则会被当作未核实声明拦截重写
+RECURSION_FALLBACK_REPLY = (
+    "这个请求的处理步骤有点多，我没能走完整个流程。"
+    "如果涉及新建计划或提醒，请到「计划」页确认一下实际结果；把请求拆小一点再发一次会更稳。"
+)
+
+
 class CompanionGraph:
     def __init__(self, repository: AgentRepository, model: Any, capabilities: dict[str, bool], checkpointer: Any = None,
                  embed_query: Any = None, timezone: str = "Asia/Shanghai", emit: Any = None,
@@ -248,9 +259,15 @@ class CompanionGraph:
             user_input=state["user_input"],
             attachments=state.get("attachments", []), vision_analyze=self.vision_analyze,
         )
-        result = await asyncio.wait_for(self.agent.ainvoke(
-            {"messages": self._messages(state)}, context=context, config={"recursion_limit": 6}
-        ), timeout=45)
+        try:
+            result = await asyncio.wait_for(self.agent.ainvoke(
+                {"messages": self._messages(state)}, context=context,
+                config={"recursion_limit": AGENT_RECURSION_LIMIT},
+            ), timeout=45)
+        except GraphRecursionError:
+            if self.emit:
+                self.emit("agent_progress", {"node": "recursion_limit"}, state["run_id"])
+            return {"reply": RECURSION_FALLBACK_REPLY, "executed_tools": []}
         reply = next((message.content for message in reversed(result["messages"]) if isinstance(message, AIMessage) and isinstance(message.content, str)), "")
         reply, compatibility_tools = self._apply_text_tool_compat(state, reply)
         executed = [message.name or "tool" for message in result["messages"] if isinstance(message, ToolMessage)]

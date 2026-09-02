@@ -173,7 +173,7 @@ load_context -> analyze_turn -> hybrid_memory_recall -> capability_route
              -> persist_turn -> select_action -> enqueue_memory_curation
 ```
 
-`analyze_turn` decides whether the turn is ordinary companionship, a question, or an operation. The post-generation quality gate checks repeated introductions, repeated forms of address, generic companion copy, and claims that an operation succeeded without tool evidence. The full path uses LangChain `create_agent`, limits tool-loop recursion to 6, allows at most two writes per turn, and applies a 45-second timeout. To-do writes are idempotent by `run_id + tool_call_id`; durable facts are deduplicated by exact content or vector similarity.
+`analyze_turn` decides whether the turn is ordinary companionship, a question, or an operation. The post-generation quality gate checks repeated introductions, repeated forms of address, generic companion copy, and claims that an operation succeeded without tool evidence. The full path uses LangChain `create_agent`, limits tool-loop recursion to 10 (a graceful fallback reply is returned instead of a failed send when the limit is hit), allows at most two writes per turn, and applies a 45-second timeout. To-do writes are idempotent by `run_id + tool_call_id`; durable facts are deduplicated by exact content or vector similarity.
 
 The model has seven scoped companion tools by default. An eighth image tool is added only after vision capability succeeds:
 

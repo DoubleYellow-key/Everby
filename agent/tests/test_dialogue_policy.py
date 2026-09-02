@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
 
-from everby_agent.graph.companion import CompanionGraph
+from langgraph.errors import GraphRecursionError
+
+from everby_agent.graph.companion import CompanionGraph, RECURSION_FALLBACK_REPLY
 from everby_agent.workflows.dialogue_policy import DialoguePolicy
 
 
@@ -106,6 +108,43 @@ class DialoguePolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quality["quality_route"], "repair")
         repaired = await graph._repair_reply({**state, **analyzed, **quality})
         self.assertEqual(repaired["reply"], "午饭时间到了。")
+
+    async def test_agent_recursion_limit_returns_graceful_fallback(self):
+        class ExplodingAgent:
+            async def ainvoke(self, *_args, **_kwargs):
+                raise GraphRecursionError("Recursion limit of 10 reached")
+
+        class FakeRepository:
+            @staticmethod
+            def get_persona(_pet_id, _name, _description, _defaults=None):
+                return {"name": "Daily", "userAddress": "凯", "speakingStyle": "高冷、克制、简短"}
+
+        graph = object.__new__(CompanionGraph)
+        graph.repository = FakeRepository()
+        graph.default_persona = {"name": "Daily", "description": ""}
+        graph.dialogue_policy = DialoguePolicy()
+        graph.emit = None
+        graph.timezone = "Asia/Shanghai"
+        graph.embed_query = None
+        graph.vision_analyze = None
+        graph.agent = ExplodingAgent()
+
+        state = {
+            "pet_id": "daily",
+            "run_id": "run-1",
+            "user_input": "提醒我明天早上10点开会",
+            "dialogue_plan": {"mode": "action", "objective": "优先完成用户明确要求的操作，再准确报告真实结果。"},
+            "history": [],
+        }
+        result = await graph._agent(state)
+        self.assertEqual(result["reply"], RECURSION_FALLBACK_REPLY)
+        self.assertEqual(result["executed_tools"], [])
+
+        # 降级文案自身必须通过质量门，否则会被改写节点二次加工
+        plan = self.policy.plan(state["user_input"])
+        assessment = self.policy.assess(result["reply"], plan, self.persona, [], result["executed_tools"])
+        self.assertEqual(assessment.violations, ())
+        self.assertEqual(assessment.route, "accept")
 
 
 if __name__ == "__main__":
