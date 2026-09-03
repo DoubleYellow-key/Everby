@@ -60,6 +60,7 @@ artifacts/
 ._*
 Thumbs.db
 Desktop.ini
+spikes/
 
 # ZCode local tooling 
 .zcode/

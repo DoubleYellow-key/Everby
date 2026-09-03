@@ -84,9 +84,10 @@ for (let offset = 0; offset < atlasPixels.length; offset += 4) {
   atlasPixels[offset + 2] = 0;
 }
 
-await sharp(atlasPixels, { raw: atlasInfo })
-  .webp({ lossless: true })
-  .toFile(join(outputDir, "spritesheet.webp"));
+await Promise.all([
+  sharp(atlasPixels, { raw: atlasInfo }).png().toFile(join(outputDir, "spritesheet.png")),
+  sharp(atlasPixels, { raw: atlasInfo }).webp({ lossless: true }).toFile(join(outputDir, "spritesheet.webp")),
+]);
 
 const petJsonPath = join(outputDir, "pet.json");
 const existing = await readFile(petJsonPath, "utf8").catch(() => null);

@@ -26,6 +26,22 @@ for (const file of files) {
     data[offset + 2] = 0;
     data[offset + 3] = 0;
   }
+
+  // Equal-width strip cuts can include a sliver of the neighboring pose. The
+  // generated subject is centered with generous margins, so clear only a
+  // narrow fixed safety band instead of flood-filling through antialiased
+  // chroma pixels that may touch the character.
+  const sideMargin = Math.max(1, Math.floor(info.width * 0.06));
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      if (x >= sideMargin && x < info.width - sideMargin) continue;
+      const offset = (y * info.width + x) * 4;
+      data[offset] = 0;
+      data[offset + 1] = 0;
+      data[offset + 2] = 0;
+      data[offset + 3] = 0;
+    }
+  }
   await sharp(data, { raw: info }).png().toFile(join(outputDirectory, basename(file)));
 }
 
