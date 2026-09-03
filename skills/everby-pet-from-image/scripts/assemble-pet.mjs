@@ -61,8 +61,30 @@ for (let row = 0; row < ROWS; row += 1) {
 if (composites.length === 0) throw new Error("没有找到任何帧图(需要 <帧目录>/row<0-8>/<列号>.png)");
 
 await mkdir(outputDir, { recursive: true });
-await sharp({ create: { width: FRAME_WIDTH * COLUMNS, height: FRAME_HEIGHT * ROWS, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+const { data: atlasPixels, info: atlasInfo } = await sharp({
+  create: {
+    width: FRAME_WIDTH * COLUMNS,
+    height: FRAME_HEIGHT * ROWS,
+    channels: 4,
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+  },
+})
   .composite(composites)
+  .ensureAlpha()
+  .raw()
+  .toBuffer({ resolveWithObject: true });
+
+// Some image generators leave arbitrary RGB values under fully transparent
+// pixels. Zero them before WebP encoding so every renderer previews the atlas
+// consistently and transparent padding cannot produce colored blocks.
+for (let offset = 0; offset < atlasPixels.length; offset += 4) {
+  if (atlasPixels[offset + 3] !== 0) continue;
+  atlasPixels[offset] = 0;
+  atlasPixels[offset + 1] = 0;
+  atlasPixels[offset + 2] = 0;
+}
+
+await sharp(atlasPixels, { raw: atlasInfo })
   .webp({ lossless: true })
   .toFile(join(outputDir, "spritesheet.webp"));
 

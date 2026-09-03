@@ -17,9 +17,10 @@ for (const file of files) {
     const blue = data[offset + 2];
     const alpha = data[offset + 3];
     if (alpha === 0) continue;
+    const greenSpill = green - Math.max(red, blue) >= 24 && green >= 96;
     const cyanSpill = green - red >= 12 && blue - red >= 12 && Math.abs(green - blue) <= 48;
     const magentaSpill = red - green >= 12 && blue - green >= 12 && Math.abs(red - blue) <= 64;
-    if (!cyanSpill && !magentaSpill) continue;
+    if (!greenSpill && !cyanSpill && !magentaSpill) continue;
     data[offset] = 0;
     data[offset + 1] = 0;
     data[offset + 2] = 0;
