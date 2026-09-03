@@ -105,8 +105,14 @@ function frameReady(frame: PetFrame): boolean {
 
 function drawPetFrame(frame: PetFrame, x: number, y: number, width: number, height: number): void {
   if (!frameReady(frame)) return;
-  if (frame.src) context.drawImage(loadImage(frame.src), x, y, width, height);
-  else context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, x, y, width, height);
+  const ratio = devicePixelRatio;
+  const dx = Math.round(x * ratio) / ratio;
+  const dy = Math.round(y * ratio) / ratio;
+  const dw = Math.round(width * ratio) / ratio;
+  const dh = Math.round(height * ratio) / ratio;
+  context.imageSmoothingQuality = "high";
+  if (frame.src) context.drawImage(loadImage(frame.src), dx, dy, dw, dh);
+  else context.drawImage(atlas, frame.x, frame.y, frame.width, frame.height, dx, dy, dw, dh);
 }
 
 function recordRule(rule: ActionRule, now: number): void {
